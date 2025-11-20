@@ -1,0 +1,32 @@
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Package managers / build outputs
+node_modules/
+dist/
+build/
+*.log
+
+# Expo/React Native caches
+.expo/
+.expo-shared/
+
+# Test artifacts
+coverage/
+
+# Binary media captures (keep out of PRs)
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.aac
+*.ogg
+*.aiff
+*.wma
+*.mp4
+*.mov
+recordings/
+artifacts/
