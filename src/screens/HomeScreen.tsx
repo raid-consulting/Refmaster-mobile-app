@@ -1,80 +1,74 @@
-import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useState } from 'react';
+import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { colors } from '../theme/colors';
 import { Header } from '../components/Header';
 import { SectionCard } from '../components/SectionCard';
-import { MeetingListItem } from '../components/MeetingListItem';
 import { ActionButton } from '../components/ActionButton';
 import { Pill } from '../components/Pill';
 
-const meetings = [
-  {
-    id: '1',
-    title: 'Platform Steering Sync',
-    datetime: 'Today · 3:00 PM',
-    agendaCount: 4,
-    status: 'scheduled' as const,
-  },
-  {
-    id: '2',
-    title: 'Vendor Due Diligence',
-    datetime: 'Tomorrow · 9:30 AM',
-    agendaCount: 3,
-    status: 'scheduled' as const,
-  },
-  {
-    id: '3',
-    title: 'Retro: Release 1.0',
-    datetime: 'Wed · 10:00 AM',
-    agendaCount: 5,
-    status: 'complete' as const,
-  },
-];
+export const HomeScreen: React.FC = () => {
+  const [plannedTitle, setPlannedTitle] = useState('Statusmøde med teamet');
+  const [plannedAgenda, setPlannedAgenda] = useState(
+    '• Opfølgning på leverancer\n• Risici og beslutninger\n• Næste sprint',
+  );
+  const [quickAgenda, setQuickAgenda] = useState('• Kort dagsorden til ad hoc optagelse');
 
-export const HomeScreen: React.FC = () => (
-  <ScrollView contentContainerStyle={styles.container}>
-    <Header title="Welcome back" subtitle="Capture meetings and align transcripts to agendas." />
+  return (
+    <ScrollView contentContainerStyle={styles.container}>
+      <Header title="Optag møder enkelt" subtitle="Vælg et af de to forløb og få transskription på dansk." />
 
-    <SectionCard title="Jump back in" actionLabel="Open"> 
-      <View style={styles.row}> 
-        <View style={styles.progressCard}> 
-          <Text style={styles.progressLabel}>Draft Agenda</Text> 
-          <Text style={styles.progressValue}>Quarterly Planning</Text> 
-          <Pill label="4 items" tone="accent" /> 
-        </View> 
-        <View style={styles.progressCard}> 
-          <Text style={styles.progressLabel}>Last Recording</Text> 
-          <Text style={styles.progressValue}>Interview w/ HQ</Text> 
-          <Pill label="Transcribed" /> 
-        </View> 
-      </View>
-      <ActionButton label="Start new meeting" />
-    </SectionCard>
+      <SectionCard title="1. Planlagt møde" actionLabel="Med dagsorden">
+        <Text style={styles.helper}>Gem dagsorden og start optagelse, så transskriptionen følger punkterne.</Text>
+        <View style={styles.fieldGroup}>
+          <Text style={styles.label}>Mødetitel</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Titel for mødet"
+            placeholderTextColor={colors.textSecondary}
+            value={plannedTitle}
+            onChangeText={setPlannedTitle}
+          />
+        </View>
+        <View style={styles.fieldGroup}>
+          <Text style={styles.label}>Dagsorden</Text>
+          <TextInput
+            style={[styles.input, styles.multiline]}
+            placeholder="Tilføj punkter med linjeskift"
+            placeholderTextColor={colors.textSecondary}
+            multiline
+            value={plannedAgenda}
+            onChangeText={setPlannedAgenda}
+          />
+        </View>
+        <ActionButton label="Gem plan og start optagelse" />
+        <View style={styles.transcriptBox}>
+          <Pill label="Transskription" tone="accent" />
+          <Text style={styles.meta}>Lyd gemmes lokalt og bliver automatisk transskriberet til dagsordenen.</Text>
+        </View>
+      </SectionCard>
 
-    <SectionCard title="Upcoming meetings" actionLabel="View all">
-      <View style={styles.list}>
-        {meetings.map((meeting) => (
-          <MeetingListItem key={meeting.id} {...meeting} />
-        ))}
-      </View>
-    </SectionCard>
-
-    <SectionCard title="Recorder prep" actionLabel="Checklist">
-      <View style={styles.checklistRow}>
-        <Pill label="Mic access" tone="accent" />
-        <Text style={styles.meta}>Request permission before capturing audio.</Text>
-      </View>
-      <View style={styles.checklistRow}>
-        <Pill label="Storage" tone="accent" />
-        <Text style={styles.meta}>Files stay local until you upload for transcription.</Text>
-      </View>
-      <View style={styles.checklistRow}>
-        <Pill label="Agenda" tone="accent" />
-        <Text style={styles.meta}>Create or import agenda to enable alignment.</Text>
-      </View>
-    </SectionCard>
-  </ScrollView>
-);
+      <SectionCard title="2. Hurtig optagelse" actionLabel="Start nu">
+        <Text style={styles.helper}>Indtast en kort dagsorden og begynd optagelsen med det samme.</Text>
+        <View style={styles.fieldGroup}>
+          <Text style={styles.label}>Dagsorden (frivillig)</Text>
+          <TextInput
+            style={[styles.input, styles.multiline]}
+            placeholder="Skriv hvad mødet handler om"
+            placeholderTextColor={colors.textSecondary}
+            multiline
+            value={quickAgenda}
+            onChangeText={setQuickAgenda}
+          />
+        </View>
+        <ActionButton label="Start optagelse uden plan" tone="secondary" />
+        <View style={styles.transcriptBox}>
+          <Pill label="Live" tone="accent" />
+          <Text style={styles.meta}>Transskriptionen kører i baggrunden, og du kan tilføje noter mens der optages.</Text>
+        </View>
+      </SectionCard>
+    </ScrollView>
+  );
+};
 
 const styles = StyleSheet.create({
   container: {
@@ -82,43 +76,46 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 24,
     paddingBottom: 48,
-    gap: 16,
+    gap: 18,
   },
-  row: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  progressCard: {
-    flex: 1,
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
-    gap: 8,
-  },
-  progressLabel: {
+  helper: {
     color: colors.textSecondary,
-    fontSize: 12,
+    fontSize: 14,
+    lineHeight: 20,
   },
-  progressValue: {
+  fieldGroup: {
+    gap: 6,
+  },
+  label: {
     color: colors.textPrimary,
-    fontSize: 16,
     fontWeight: '700',
+    fontSize: 14,
   },
-  list: {
-    gap: 10,
-  },
-  checklistRow: {
+  input: {
     backgroundColor: colors.surface,
-    padding: 12,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
-    gap: 6,
+    color: colors.textPrimary,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+  },
+  multiline: {
+    minHeight: 100,
+    textAlignVertical: 'top',
+  },
+  transcriptBox: {
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 12,
+    gap: 8,
   },
   meta: {
     color: colors.textSecondary,
     fontSize: 12,
+    lineHeight: 18,
   },
 });
