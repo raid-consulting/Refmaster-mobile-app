@@ -319,68 +319,122 @@ export const HomeScreen: React.FC = () => {
           />
           <View style={styles.transcriptBox}>
             <View style={styles.statusRow}>
-            <Pill label={isRecording ? 'Live' : 'Klar'} tone={isRecording ? 'accent' : 'default'} />
-            {isRecording && <Text style={styles.liveTime}>{formatDuration(recordingDuration)}</Text>}
-          </View>
-          <Text style={styles.meta}>
-            {isRecording
+              <Pill label={isRecording ? 'Live' : 'Klar'} tone={isRecording ? 'accent' : 'default'} />
+              {isRecording && <Text style={styles.liveTime}>{formatDuration(recordingDuration)}</Text>}
+            </View>
+            <Text style={styles.meta}>
+              {isRecording
                 ? 'Optager og transskriberer i baggrunden. Tilføj noter mens du optager.'
-              : isTranscribing
-                ? 'Transskriberer optagelsen...'
+                : isTranscribing
+                  ? 'Transskriberer optagelsen...'
+                  : transcript
+                    ? transcriptionLanguage === 'da'
+                      ? 'Transskription gemt fra seneste optagelse.'
+                      : 'Transcript saved from latest recording.'
+                    : 'Klar til næste hurtige optagelse.'}
+            </Text>
+            {progressStep !== 'idle' && (
+              <View style={styles.progressSection}>
+                <View style={styles.progressHeader}>
+                  <Text style={styles.progressLabel}>
+                    {progressStep === 'uploading'
+                      ? transcriptionLanguage === 'da'
+                        ? 'Uploader lyd...'
+                        : 'Uploading audio...'
+                      : progressStep === 'transcribing'
+                        ? transcriptionLanguage === 'da'
+                          ? 'Transskriberer lyd...'
+                          : 'Transcribing audio...'
+                        : progressStep === 'completed'
+                          ? transcriptionLanguage === 'da'
+                            ? 'Transskription færdig'
+                            : 'Transcription finished'
+                          : transcriptionLanguage === 'da'
+                            ? 'Der opstod en fejl'
+                            : 'An error occurred'}
+                  </Text>
+                  <Text style={styles.progressValue}>{Math.min(transcribeProgress, 100)}%</Text>
+                </View>
+                <View style={styles.progressBar}>
+                  <View style={[styles.progressFill, { width: `${Math.min(transcribeProgress, 100)}%` }]} />
+                </View>
+              </View>
+            )}
+            {statusMessage ? <Text style={styles.statusMessage}>{statusMessage}</Text> : null}
+            {activityLog.length > 0 && (
+              <View style={styles.logBox}>
+                <Text style={styles.logLabel}>
+                  {transcriptionLanguage === 'da' ? 'Statuslog' : 'Activity log'}
+                </Text>
+                {activityLog.map((entry, index) => (
+                  <Text key={index} style={styles.logEntry}>
+                    {`• ${entry}`}
+                  </Text>
+                ))}
+              </View>
+            )}
+          </View>
+        </SectionCard>
+
+        <SectionCard
+          title={transcriptionLanguage === 'da' ? 'Transskription' : 'Transcription'}
+          actionLabel={
+            transcript
+              ? transcriptionLanguage === 'da'
+                ? 'Del med mødedeltagere'
+                : 'Share with attendees'
+              : undefined
+          }
+        >
+          <View style={styles.transcriptHeader}>
+            <Pill
+              label={
+                isRecording
+                  ? transcriptionLanguage === 'da'
+                    ? 'Optager'
+                    : 'Recording'
+                  : isTranscribing
+                    ? transcriptionLanguage === 'da'
+                      ? 'Behandler lyd'
+                      : 'Processing audio'
+                    : transcript
+                      ? transcriptionLanguage === 'da'
+                        ? 'Klar til deling'
+                        : 'Ready to share'
+                      : transcriptionLanguage === 'da'
+                        ? 'Ingen transskription endnu'
+                        : 'No transcript yet'
+              }
+              tone={isRecording ? 'accent' : transcript ? 'primary' : 'default'}
+            />
+            <Text style={styles.transcriptStatus}>
+              {progressStep === 'transcribing'
+                ? transcriptionLanguage === 'da'
+                  ? 'Transskriberer den seneste optagelse'
+                  : 'Transcribing your latest recording'
                 : transcript
                   ? transcriptionLanguage === 'da'
-                    ? 'Transskription gemt fra seneste optagelse.'
-                    : 'Transcript saved from latest recording.'
-                  : 'Klar til næste hurtige optagelse.'}
-          </Text>
-          {progressStep !== 'idle' && (
-            <View style={styles.progressSection}>
-              <View style={styles.progressHeader}>
-                <Text style={styles.progressLabel}>
-                  {progressStep === 'uploading'
-                    ? transcriptionLanguage === 'da'
-                      ? 'Uploader lyd...'
-                      : 'Uploading audio...'
-                    : progressStep === 'transcribing'
-                      ? transcriptionLanguage === 'da'
-                        ? 'Transskriberer lyd...'
-                        : 'Transcribing audio...'
-                      : progressStep === 'completed'
-                        ? transcriptionLanguage === 'da'
-                          ? 'Transskription færdig'
-                          : 'Transcription finished'
-                        : transcriptionLanguage === 'da'
-                          ? 'Der opstod en fejl'
-                          : 'An error occurred'}
-                </Text>
-                <Text style={styles.progressValue}>{Math.min(transcribeProgress, 100)}%</Text>
-              </View>
-              <View style={styles.progressBar}>
-                <View style={[styles.progressFill, { width: `${Math.min(transcribeProgress, 100)}%` }]} />
-              </View>
-            </View>
-          )}
-          {statusMessage ? <Text style={styles.statusMessage}>{statusMessage}</Text> : null}
-          {activityLog.length > 0 && (
-            <View style={styles.logBox}>
-              <Text style={styles.logLabel}>
-                {transcriptionLanguage === 'da' ? 'Statuslog' : 'Activity log'}
+                    ? 'Seneste transskription klar nedenfor'
+                    : 'Latest transcript available below'
+                  : transcriptionLanguage === 'da'
+                    ? 'Starter når du laver den første optagelse'
+                    : 'Will appear after your first recording'}
+            </Text>
+          </View>
+
+          <View style={styles.transcriptContent}>
+            <Text style={styles.transcriptLabel}>
+              {transcriptionLanguage === 'da' ? 'Seneste transskription' : 'Latest transcript'}
+            </Text>
+            {transcript ? (
+              <Text style={styles.transcriptText}>{transcript}</Text>
+            ) : (
+              <Text style={styles.transcriptPlaceholder}>
+                {transcriptionLanguage === 'da'
+                  ? 'Transskriptionen vises her, så snart din optagelse er behandlet.'
+                  : 'Your transcript will appear here as soon as the recording has been processed.'}
               </Text>
-              {activityLog.map((entry, index) => (
-                <Text key={index} style={styles.logEntry}>
-                  {`• ${entry}`}
-                </Text>
-              ))}
-            </View>
-          )}
-          {transcript ? (
-            <View style={styles.transcriptContent}>
-              <Text style={styles.transcriptLabel}>
-                {transcriptionLanguage === 'da' ? 'Seneste transskription' : 'Latest transcript'}
-              </Text>
-                <Text style={styles.transcriptText}>{transcript}</Text>
-              </View>
-            ) : null}
+            )}
           </View>
         </SectionCard>
       </ScrollView>
@@ -522,6 +576,14 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: '#0d2439',
   },
+  transcriptHeader: {
+    gap: 6,
+  },
+  transcriptStatus: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+  },
   transcriptLabel: {
     color: colors.textSecondary,
     fontSize: 12,
@@ -531,5 +593,11 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 13,
     lineHeight: 18,
+  },
+  transcriptPlaceholder: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+    fontStyle: 'italic',
   },
 });
