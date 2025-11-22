@@ -15,6 +15,8 @@ export type TranscriptionOptions = {
 };
 
 const DEFAULT_API_BASE = process.env.EXPO_PUBLIC_TRANSCRIPTION_API;
+const OPENAI_API_KEY = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
+const FORCE_BACKEND = process.env.EXPO_PUBLIC_FORCE_BACKEND === 'true';
 
 const OPENAI_TRANSCRIPTIONS_URL = 'https://api.openai.com/v1/audio/transcriptions';
 
@@ -35,7 +37,10 @@ export async function transcribeAudio({
   let socket: WebSocket | null = null;
   let closed = false;
 
-  const useDirectWhisper = !apiBaseUrl;
+  const apiBase = apiBaseUrl?.trim();
+  const hasApiBase = Boolean(apiBase);
+  const hasOpenAiKey = Boolean(OPENAI_API_KEY);
+  const preferDirectWhisper = hasOpenAiKey && (!hasApiBase || !FORCE_BACKEND);
 
   const audioFile: { uri: string; name: string; type: string } = {
     uri: audioUri,
@@ -58,8 +63,7 @@ export async function transcribeAudio({
   };
 
   const transcribeWithOpenAI = async () => {
-    const apiKey = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
-    if (!apiKey) {
+    if (!OPENAI_API_KEY) {
       throw new Error('Missing EXPO_PUBLIC_OPENAI_API_KEY for direct Whisper transcription');
     }
 
@@ -83,7 +87,7 @@ export async function transcribeAudio({
     const response = await fetch(OPENAI_TRANSCRIPTIONS_URL, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
       },
       body: formData,
       signal: abortController.signal,
@@ -117,7 +121,7 @@ export async function transcribeAudio({
   };
 
   const uploadAudio = async () => {
-    if (!apiBaseUrl) {
+    if (!apiBase) {
       throw new Error('Transcription API base URL is missing');
     }
 
@@ -130,7 +134,7 @@ export async function transcribeAudio({
       formData.append('agenda', agenda);
     }
 
-    const response = await fetch(`${apiBaseUrl}/transcriptions`, {
+    const response = await fetch(`${apiBase}/transcriptions`, {
       method: 'POST',
       body: formData,
       signal: abortController.signal,
@@ -153,11 +157,11 @@ export async function transcribeAudio({
   };
 
   const connectWebSocket = (id: string) => {
-    if (!apiBaseUrl) {
+    if (!apiBase) {
       throw new Error('Transcription API base URL is missing');
     }
 
-    const streamUrl = `${toWebSocketUrl(apiBaseUrl)}/transcriptions/${id}/stream`;
+    const streamUrl = `${toWebSocketUrl(apiBase)}/transcriptions/${id}/stream`;
     socket = new WebSocket(streamUrl);
 
     socket.onmessage = (message) => {
@@ -181,23 +185,58 @@ export async function transcribeAudio({
     };
   };
 
-  if (useDirectWhisper) {
+  const startDirectTranscription = () => {
     transcribeWithOpenAI()
       .then(() => emit({ type: 'closed' }))
       .catch((error) => {
         emit({ type: 'error', message: describeNetworkError(error) });
         emit({ type: 'closed' });
       });
+  };
 
-    return () => {
-      closed = true;
-      abortController.abort();
-    };
-  }
+  const startBackendTranscription = async () => {
+    const transcriptionId = await uploadAudio();
+    emit({ type: 'status', message: 'Transcription upload complete' });
+    connectWebSocket(transcriptionId);
+  };
 
-  const transcriptionId = await uploadAudio();
-  emit({ type: 'status', message: 'Transcription upload complete' });
-  connectWebSocket(transcriptionId);
+  const startPreferredFlow = () => {
+    if (preferDirectWhisper) {
+      startDirectTranscription();
+      return;
+    }
+
+    if (!hasApiBase) {
+      emit({
+        type: 'error',
+        message:
+          language === 'da'
+            ? 'Ingen transskriptionsopsætning fundet. Tilføj en OpenAI API-nøgle.'
+            : 'No transcription setup found. Add an OpenAI API key to use Whisper directly.',
+      });
+      emit({ type: 'closed' });
+      return;
+    }
+
+    startBackendTranscription().catch((error) => {
+      if (hasOpenAiKey && !FORCE_BACKEND) {
+        emit({
+          type: 'status',
+          message:
+            language === 'da'
+              ? 'Backend utilgængelig, skifter til direkte Whisper-transskription'
+              : 'Backend unavailable, falling back to direct Whisper transcription',
+        });
+        startDirectTranscription();
+        return;
+      }
+
+      emit({ type: 'error', message: describeNetworkError(error) });
+      emit({ type: 'closed' });
+    });
+  };
+
+  startPreferredFlow();
 
   return () => {
     closed = true;

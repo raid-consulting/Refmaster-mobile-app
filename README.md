@@ -20,10 +20,11 @@ This repository now includes an Expo/React Native skeleton focused on early cros
 
 ### Transcription without a backend
 
-For quick tests, the app can call OpenAI Whisper directly without running your own API. Configure the following environment variables when starting Expo:
+For quick tests, the app calls OpenAI Whisper directly when an API key is available—no backend or additional configuration needed. Set the following variable before starting Expo:
 
 - `EXPO_PUBLIC_OPENAI_API_KEY`: required for direct Whisper calls. The key will be used client-side, so prefer a restricted token when testing.
-- `EXPO_PUBLIC_TRANSCRIPTION_API` (optional): set this to point to your backend when you want to switch back to server-hosted transcriptions.
+
+If you still want to use a self-hosted transcription service, set `EXPO_PUBLIC_TRANSCRIPTION_API` and optionally `EXPO_PUBLIC_FORCE_BACKEND=true` to disable the direct Whisper fallback.
 
 ## Implementation Plan
 See [docs/implementation-plan.md](docs/implementation-plan.md) for the step-by-step delivery roadmap covering audio capture, transcription, and agenda alignment.
