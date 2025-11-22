@@ -8,12 +8,13 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Audio, Recording } from 'expo-av';
+import { Audio } from 'expo-av';
 import { colors } from '../theme/colors';
 import { Header } from '../components/Header';
 import { SectionCard } from '../components/SectionCard';
 import { ActionButton } from '../components/ActionButton';
 import { Pill } from '../components/Pill';
+import { TranscriptionEvent, transcribeAudio } from '../services/transcription';
 
 export const HomeScreen: React.FC = () => {
   const [plannedTitle, setPlannedTitle] = useState('Statusmøde med teamet');
@@ -22,7 +23,7 @@ export const HomeScreen: React.FC = () => {
   );
   const [quickAgenda, setQuickAgenda] = useState('• Kort dagsorden til ad hoc optagelse');
   const [transcriptionLanguage, setTranscriptionLanguage] = useState<'da' | 'en'>('da');
-  const [quickRecording, setQuickRecording] = useState<Recording | null>(null);
+  const [quickRecording, setQuickRecording] = useState<Audio.Recording | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [transcript, setTranscript] = useState('');
@@ -33,7 +34,7 @@ export const HomeScreen: React.FC = () => {
   );
   const [transcribeProgress, setTranscribeProgress] = useState(0);
   const [activityLog, setActivityLog] = useState<string[]>([]);
-  const transcriptionTimers = useRef<NodeJS.Timeout[]>([]);
+  const transcriptionSubscription = useRef<(() => void) | null>(null);
 
   const addLogEntry = (entry: string) => {
     setActivityLog((current) => [...current, entry]);
@@ -41,8 +42,8 @@ export const HomeScreen: React.FC = () => {
 
   useEffect(() => {
     return () => {
-      transcriptionTimers.current.forEach(clearTimeout);
-      transcriptionTimers.current = [];
+      transcriptionSubscription.current?.();
+      transcriptionSubscription.current = null;
       if (quickRecording) {
         quickRecording.stopAndUnloadAsync().catch(() => {});
       }
@@ -58,82 +59,112 @@ export const HomeScreen: React.FC = () => {
     return `${minutes}:${seconds}`;
   };
 
-  const resetTranscriptionTimers = () => {
-    transcriptionTimers.current.forEach(clearTimeout);
-    transcriptionTimers.current = [];
+  const cleanupTranscription = () => {
+    transcriptionSubscription.current?.();
+    transcriptionSubscription.current = null;
   };
 
-  const simulateTranscription = (language: 'da' | 'en', agenda: string) => {
-    resetTranscriptionTimers();
+  const handleTranscriptionEvent = (language: 'da' | 'en', event: TranscriptionEvent) => {
+    switch (event.type) {
+      case 'status':
+        if (event.message) {
+          setStatusMessage(event.message);
+          addLogEntry(event.message);
+        }
+        break;
+      case 'progress':
+        if (event.step) {
+          setProgressStep(event.step);
+        }
+        if (typeof event.progress === 'number') {
+          setTranscribeProgress(event.progress);
+        }
+        break;
+      case 'partial':
+        setProgressStep('transcribing');
+        setIsTranscribing(true);
+        if (typeof event.progress === 'number') {
+          setTranscribeProgress(event.progress);
+        }
+        if (event.text) {
+          setTranscript(event.text);
+        }
+        if (event.message) {
+          setStatusMessage(event.message);
+          addLogEntry(event.message);
+        }
+        break;
+      case 'final':
+        setTranscript(event.text ?? '');
+        setTranscribeProgress(100);
+        setProgressStep('completed');
+        setIsTranscribing(false);
+        setStatusMessage(
+          event.message ?? (language === 'da' ? 'Transskription klar' : 'Transcription ready')
+        );
+        addLogEntry(
+          event.message ??
+            (language === 'da' ? 'Transskription fuldført.' : 'Transcription completed.')
+        );
+        cleanupTranscription();
+        break;
+      case 'error':
+        setIsTranscribing(false);
+        setProgressStep('error');
+        setStatusMessage(
+          event.message ??
+            (language === 'da'
+              ? 'Kunne ikke gennemføre transskription'
+              : 'Unable to transcribe audio')
+        );
+        if (event.message) {
+          addLogEntry(event.message);
+        }
+        cleanupTranscription();
+        break;
+      case 'closed':
+        cleanupTranscription();
+        break;
+      default:
+        break;
+    }
+  };
+
+  const startTranscription = async (language: 'da' | 'en', agenda: string, audioUri: string) => {
+    cleanupTranscription();
     setIsTranscribing(true);
     setTranscript('');
     setProgressStep('uploading');
     setTranscribeProgress(5);
     setActivityLog([]);
-    addLogEntry(
-      language === 'da' ? 'Uploader lyd til transskription...' : 'Uploading audio for transcription...'
-    );
 
-    const prompt = agenda.trim() ? agenda.trim() : language === 'da' ? 'hurtigt møde' : 'quick meeting';
-    const localizedLines =
+    const uploadingMessage =
       language === 'da'
-        ? [
-            '• Optagelse gemt lokalt og sendt til transskription.',
-            `• Emne: ${prompt}.`,
-            '• Deltagere er enige om næste skridt og action items.',
-            '• Transskriptionen er klar til deling.',
-          ]
-        : [
-            '• Recording saved locally and queued for transcription.',
-            `• Topic: ${prompt}.`,
-            '• Participants aligned on next steps and action items.',
-            '• Transcript is ready to share.',
-          ];
+        ? 'Uploader lyd til transskription...'
+        : 'Uploading audio for transcription...';
+    setStatusMessage(uploadingMessage);
+    addLogEntry(uploadingMessage);
 
-    const markTranscriptionReady = () => {
+    try {
+      const unsubscribe = await transcribeAudio({
+        audioUri,
+        language,
+        agenda,
+        onEvent: (event) => handleTranscriptionEvent(language, event),
+      });
+
+      transcriptionSubscription.current = unsubscribe;
+    } catch (error) {
+      console.error('Failed to transcribe audio', error);
       setIsTranscribing(false);
-      setProgressStep('completed');
-      setTranscribeProgress(100);
-      setStatusMessage(language === 'da' ? 'Transskription klar' : 'Transcription ready');
-      addLogEntry(language === 'da' ? 'Transskription fuldført.' : 'Transcription completed.');
-    };
-
-    const progressUpdates = [
-      { value: 20, message: language === 'da' ? 'Optagelse uploadet.' : 'Upload complete.' },
-      {
-        value: 45,
-        message: language === 'da' ? 'Transskription igangsat...' : 'Starting transcription...'
-      },
-      { value: 70, message: language === 'da' ? 'Analysere lyd...' : 'Analyzing audio...' },
-      {
-        value: 90,
-        message:
-          language === 'da'
-            ? 'Forbereder transskriptionsresultat...'
-            : 'Preparing transcription output...'
-      },
-    ];
-
-    progressUpdates.forEach((update, index) => {
-      const timer = setTimeout(() => {
-        if (index === 0) {
-          setProgressStep('transcribing');
-        }
-        setTranscribeProgress(update.value);
-        addLogEntry(update.message);
-      }, 600 * (index + 1));
-      transcriptionTimers.current.push(timer);
-    });
-
-    localizedLines.forEach((line, index) => {
-      const timer = setTimeout(() => {
-        setTranscript((current) => (current ? `${current}\n${line}` : line));
-        if (index === localizedLines.length - 1) {
-          markTranscriptionReady();
-        }
-      }, 900 * (index + 1));
-      transcriptionTimers.current.push(timer);
-    });
+      setProgressStep('error');
+      const message =
+        language === 'da'
+          ? 'Kunne ikke starte transskription'
+          : 'Unable to start transcription';
+      setStatusMessage(message);
+      addLogEntry(message);
+    }
   };
 
   const startQuickRecording = async () => {
@@ -198,6 +229,7 @@ export const HomeScreen: React.FC = () => {
     if (!quickRecording) return;
 
     try {
+      const recordingUri = quickRecording.getURI();
       await quickRecording.stopAndUnloadAsync();
       setStatusMessage(
         transcriptionLanguage === 'da'
@@ -213,7 +245,17 @@ export const HomeScreen: React.FC = () => {
       );
       setIsRecording(false);
       setQuickRecording(null);
-      simulateTranscription(transcriptionLanguage, quickAgenda);
+      if (recordingUri) {
+        await startTranscription(transcriptionLanguage, quickAgenda, recordingUri);
+      } else {
+        setProgressStep('error');
+        const message =
+          transcriptionLanguage === 'da'
+            ? 'Kunne ikke finde lydfilen efter optagelsen'
+            : 'Could not access the recording file';
+        setStatusMessage(message);
+        addLogEntry(message);
+      }
     } catch (error) {
       console.error('Failed to stop quick recording', error);
       setStatusMessage(
@@ -405,7 +447,7 @@ export const HomeScreen: React.FC = () => {
                         ? 'Ingen transskription endnu'
                         : 'No transcript yet'
               }
-              tone={isRecording ? 'accent' : transcript ? 'primary' : 'default'}
+              tone={isRecording || isTranscribing || transcript ? 'accent' : 'default'}
             />
             <Text style={styles.transcriptStatus}>
               {progressStep === 'transcribing'
