@@ -41,6 +41,8 @@ export async function transcribeAudio({
       name: 'recording.m4a',
       type: 'audio/m4a',
     } as any);
+    formData.append('provider', 'whisper');
+    formData.append('model', 'whisper-1');
     formData.append('language', language);
     if (agenda) {
       formData.append('agenda', agenda);
