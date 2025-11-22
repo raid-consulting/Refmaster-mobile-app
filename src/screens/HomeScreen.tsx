@@ -28,7 +28,16 @@ export const HomeScreen: React.FC = () => {
   const [transcript, setTranscript] = useState('');
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
+  const [progressStep, setProgressStep] = useState<'idle' | 'uploading' | 'transcribing' | 'completed' | 'error'>(
+    'idle',
+  );
+  const [transcribeProgress, setTranscribeProgress] = useState(0);
+  const [activityLog, setActivityLog] = useState<string[]>([]);
   const transcriptionTimers = useRef<NodeJS.Timeout[]>([]);
+
+  const addLogEntry = (entry: string) => {
+    setActivityLog((current) => [...current, entry]);
+  };
 
   useEffect(() => {
     return () => {
@@ -58,6 +67,12 @@ export const HomeScreen: React.FC = () => {
     resetTranscriptionTimers();
     setIsTranscribing(true);
     setTranscript('');
+    setProgressStep('uploading');
+    setTranscribeProgress(5);
+    setActivityLog([]);
+    addLogEntry(
+      language === 'da' ? 'Uploader lyd til transskription...' : 'Uploading audio for transcription...'
+    );
 
     const prompt = agenda.trim() ? agenda.trim() : language === 'da' ? 'hurtigt møde' : 'quick meeting';
     const localizedLines =
@@ -75,12 +90,46 @@ export const HomeScreen: React.FC = () => {
             '• Transcript is ready to share.',
           ];
 
+    const markTranscriptionReady = () => {
+      setIsTranscribing(false);
+      setProgressStep('completed');
+      setTranscribeProgress(100);
+      setStatusMessage(language === 'da' ? 'Transskription klar' : 'Transcription ready');
+      addLogEntry(language === 'da' ? 'Transskription fuldført.' : 'Transcription completed.');
+    };
+
+    const progressUpdates = [
+      { value: 20, message: language === 'da' ? 'Optagelse uploadet.' : 'Upload complete.' },
+      {
+        value: 45,
+        message: language === 'da' ? 'Transskription igangsat...' : 'Starting transcription...'
+      },
+      { value: 70, message: language === 'da' ? 'Analysere lyd...' : 'Analyzing audio...' },
+      {
+        value: 90,
+        message:
+          language === 'da'
+            ? 'Forbereder transskriptionsresultat...'
+            : 'Preparing transcription output...'
+      },
+    ];
+
+    progressUpdates.forEach((update, index) => {
+      const timer = setTimeout(() => {
+        if (index === 0) {
+          setProgressStep('transcribing');
+        }
+        setTranscribeProgress(update.value);
+        addLogEntry(update.message);
+      }, 600 * (index + 1));
+      transcriptionTimers.current.push(timer);
+    });
+
     localizedLines.forEach((line, index) => {
       const timer = setTimeout(() => {
         setTranscript((current) => (current ? `${current}\n${line}` : line));
         if (index === localizedLines.length - 1) {
-          setIsTranscribing(false);
-          setStatusMessage(language === 'da' ? 'Transskription klar' : 'Transcription ready');
+          markTranscriptionReady();
         }
       }, 900 * (index + 1));
       transcriptionTimers.current.push(timer);
@@ -117,6 +166,13 @@ export const HomeScreen: React.FC = () => {
       });
 
       setStatusMessage(transcriptionLanguage === 'da' ? 'Optagelse startet' : 'Recording started');
+      setActivityLog([]);
+      setProgressStep('idle');
+      addLogEntry(
+        transcriptionLanguage === 'da'
+          ? 'Optagelse startet. Tilføj noter mens du optager.'
+          : 'Recording started. Add notes while you capture audio.'
+      );
       setQuickRecording(recording);
       setIsRecording(true);
       setRecordingDuration(0);
@@ -128,6 +184,12 @@ export const HomeScreen: React.FC = () => {
         transcriptionLanguage === 'da'
           ? 'Kunne ikke starte optagelse'
           : 'Unable to start recording',
+      );
+      setProgressStep('error');
+      addLogEntry(
+        transcriptionLanguage === 'da'
+          ? 'Fejl: Optagelsen kunne ikke startes.'
+          : 'Error: Unable to start recording.'
       );
     }
   };
@@ -142,6 +204,13 @@ export const HomeScreen: React.FC = () => {
           ? 'Optagelse stoppet — transskriberer'
           : 'Recording stopped — transcribing',
       );
+      setProgressStep('uploading');
+      setTranscribeProgress(0);
+      addLogEntry(
+        transcriptionLanguage === 'da'
+          ? 'Optagelse stoppet. Starter upload...'
+          : 'Recording stopped. Starting upload...'
+      );
       setIsRecording(false);
       setQuickRecording(null);
       simulateTranscription(transcriptionLanguage, quickAgenda);
@@ -151,6 +220,12 @@ export const HomeScreen: React.FC = () => {
         transcriptionLanguage === 'da'
           ? 'Kunne ikke stoppe optagelsen'
           : 'Unable to stop recording',
+      );
+      setProgressStep('error');
+      addLogEntry(
+        transcriptionLanguage === 'da'
+          ? 'Fejl: Optagelsen kunne ikke stoppes.'
+          : 'Error: Unable to stop recording.'
       );
     }
   };
@@ -244,26 +319,65 @@ export const HomeScreen: React.FC = () => {
           />
           <View style={styles.transcriptBox}>
             <View style={styles.statusRow}>
-              <Pill label={isRecording ? 'Live' : 'Klar'} tone={isRecording ? 'accent' : 'default'} />
-              {isRecording && <Text style={styles.liveTime}>{formatDuration(recordingDuration)}</Text>}
-            </View>
-            <Text style={styles.meta}>
-              {isRecording
+            <Pill label={isRecording ? 'Live' : 'Klar'} tone={isRecording ? 'accent' : 'default'} />
+            {isRecording && <Text style={styles.liveTime}>{formatDuration(recordingDuration)}</Text>}
+          </View>
+          <Text style={styles.meta}>
+            {isRecording
                 ? 'Optager og transskriberer i baggrunden. Tilføj noter mens du optager.'
-                : isTranscribing
-                  ? 'Transskriberer optagelsen...'
-                  : transcript
+              : isTranscribing
+                ? 'Transskriberer optagelsen...'
+                : transcript
+                  ? transcriptionLanguage === 'da'
+                    ? 'Transskription gemt fra seneste optagelse.'
+                    : 'Transcript saved from latest recording.'
+                  : 'Klar til næste hurtige optagelse.'}
+          </Text>
+          {progressStep !== 'idle' && (
+            <View style={styles.progressSection}>
+              <View style={styles.progressHeader}>
+                <Text style={styles.progressLabel}>
+                  {progressStep === 'uploading'
                     ? transcriptionLanguage === 'da'
-                      ? 'Transskription gemt fra seneste optagelse.'
-                      : 'Transcript saved from latest recording.'
-                    : 'Klar til næste hurtige optagelse.'}
-            </Text>
-            {statusMessage ? <Text style={styles.statusMessage}>{statusMessage}</Text> : null}
-            {transcript ? (
-              <View style={styles.transcriptContent}>
-                <Text style={styles.transcriptLabel}>
-                  {transcriptionLanguage === 'da' ? 'Seneste transskription' : 'Latest transcript'}
+                      ? 'Uploader lyd...'
+                      : 'Uploading audio...'
+                    : progressStep === 'transcribing'
+                      ? transcriptionLanguage === 'da'
+                        ? 'Transskriberer lyd...'
+                        : 'Transcribing audio...'
+                      : progressStep === 'completed'
+                        ? transcriptionLanguage === 'da'
+                          ? 'Transskription færdig'
+                          : 'Transcription finished'
+                        : transcriptionLanguage === 'da'
+                          ? 'Der opstod en fejl'
+                          : 'An error occurred'}
                 </Text>
+                <Text style={styles.progressValue}>{Math.min(transcribeProgress, 100)}%</Text>
+              </View>
+              <View style={styles.progressBar}>
+                <View style={[styles.progressFill, { width: `${Math.min(transcribeProgress, 100)}%` }]} />
+              </View>
+            </View>
+          )}
+          {statusMessage ? <Text style={styles.statusMessage}>{statusMessage}</Text> : null}
+          {activityLog.length > 0 && (
+            <View style={styles.logBox}>
+              <Text style={styles.logLabel}>
+                {transcriptionLanguage === 'da' ? 'Statuslog' : 'Activity log'}
+              </Text>
+              {activityLog.map((entry, index) => (
+                <Text key={index} style={styles.logEntry}>
+                  {`• ${entry}`}
+                </Text>
+              ))}
+            </View>
+          )}
+          {transcript ? (
+            <View style={styles.transcriptContent}>
+              <Text style={styles.transcriptLabel}>
+                {transcriptionLanguage === 'da' ? 'Seneste transskription' : 'Latest transcript'}
+              </Text>
                 <Text style={styles.transcriptText}>{transcript}</Text>
               </View>
             ) : null}
@@ -355,9 +469,49 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.5,
   },
+  progressSection: {
+    gap: 6,
+  },
+  progressHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  progressLabel: {
+    color: colors.textPrimary,
+    fontWeight: '700',
+  },
+  progressValue: {
+    color: colors.textSecondary,
+    fontWeight: '700',
+  },
+  progressBar: {
+    height: 8,
+    backgroundColor: '#0f2c44',
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: colors.primary,
+  },
   statusMessage: {
     color: colors.textPrimary,
     fontWeight: '600',
+  },
+  logBox: {
+    gap: 4,
+  },
+  logLabel: {
+    color: colors.textSecondary,
+    fontWeight: '700',
+    fontSize: 12,
+    letterSpacing: 0.3,
+  },
+  logEntry: {
+    color: colors.textPrimary,
+    fontSize: 12,
+    lineHeight: 18,
   },
   transcriptContent: {
     gap: 6,
