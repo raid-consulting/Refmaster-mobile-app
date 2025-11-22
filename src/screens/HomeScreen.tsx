@@ -16,6 +16,16 @@ import { ActionButton } from '../components/ActionButton';
 import { Pill } from '../components/Pill';
 import { TranscriptionEvent, transcribeAudio } from '../services/transcription';
 
+const describeError = (error: unknown) => {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  try {
+    return JSON.stringify(error);
+  } catch (jsonError) {
+    return String(jsonError);
+  }
+};
+
 export const HomeScreen: React.FC = () => {
   const [plannedTitle, setPlannedTitle] = useState('Statusmøde med teamet');
   const [plannedAgenda, setPlannedAgenda] = useState(
@@ -158,12 +168,14 @@ export const HomeScreen: React.FC = () => {
       console.error('Failed to transcribe audio', error);
       setIsTranscribing(false);
       setProgressStep('error');
-      const message =
+      const baseMessage =
         language === 'da'
           ? 'Kunne ikke starte transskription'
           : 'Unable to start transcription';
-      setStatusMessage(message);
-      addLogEntry(message);
+      const detail = describeError(error);
+      const fullMessage = `${baseMessage}: ${detail}`;
+      setStatusMessage(fullMessage);
+      addLogEntry(fullMessage);
     }
   };
 
@@ -211,16 +223,17 @@ export const HomeScreen: React.FC = () => {
       setIsTranscribing(false);
     } catch (error) {
       console.error('Failed to start quick recording', error);
+      const detail = describeError(error);
       setStatusMessage(
         transcriptionLanguage === 'da'
-          ? 'Kunne ikke starte optagelse'
-          : 'Unable to start recording',
+          ? `Kunne ikke starte optagelse: ${detail}`
+          : `Unable to start recording: ${detail}`,
       );
       setProgressStep('error');
       addLogEntry(
         transcriptionLanguage === 'da'
-          ? 'Fejl: Optagelsen kunne ikke startes.'
-          : 'Error: Unable to start recording.'
+          ? `Fejl: Optagelsen kunne ikke startes. ${detail}`
+          : `Error: Unable to start recording. ${detail}`
       );
     }
   };
@@ -258,16 +271,17 @@ export const HomeScreen: React.FC = () => {
       }
     } catch (error) {
       console.error('Failed to stop quick recording', error);
+      const detail = describeError(error);
       setStatusMessage(
         transcriptionLanguage === 'da'
-          ? 'Kunne ikke stoppe optagelsen'
-          : 'Unable to stop recording',
+          ? `Kunne ikke stoppe optagelsen: ${detail}`
+          : `Unable to stop recording: ${detail}`,
       );
       setProgressStep('error');
       addLogEntry(
         transcriptionLanguage === 'da'
-          ? 'Fejl: Optagelsen kunne ikke stoppes.'
-          : 'Error: Unable to stop recording.'
+          ? `Fejl: Optagelsen kunne ikke stoppes. ${detail}`
+          : `Error: Unable to stop recording. ${detail}`
       );
     }
   };
