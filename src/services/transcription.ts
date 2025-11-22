@@ -33,6 +33,15 @@ export async function transcribeAudio({
   let socket: WebSocket | null = null;
   let closed = false;
 
+  const describeNetworkError = (error: unknown) => {
+    if (error instanceof TypeError && error.message.includes('Network request failed')) {
+      return `Network request failed. Check your connection or that the transcription API (${apiBaseUrl}) is reachable.`;
+    }
+
+    if (error instanceof Error) return error.message;
+    return String(error);
+  };
+
   const emit = (event: TranscriptionEvent) => {
     if (closed) return;
     onEvent(event);
@@ -56,11 +65,14 @@ export async function transcribeAudio({
       method: 'POST',
       body: formData,
       signal: abortController.signal,
+    }).catch((error) => {
+      throw new Error(describeNetworkError(error));
     });
 
     if (!response.ok) {
-      const message = await response.text();
-      throw new Error(message || 'Failed to upload audio for transcription');
+      const message = await response.text().catch(() => '');
+      const fallback = `Failed to upload audio for transcription (status ${response.status})`;
+      throw new Error(message || fallback);
     }
 
     const payload = await response.json();
