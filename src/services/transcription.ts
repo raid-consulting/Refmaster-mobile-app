@@ -16,7 +16,11 @@ export type TranscriptionOptions = {
 
 const DEFAULT_API_BASE = process.env.EXPO_PUBLIC_TRANSCRIPTION_API || 'https://api.example.com';
 
-const toWebSocketUrl = (httpUrl: string) => httpUrl.replace(/^http/, 'ws');
+const toWebSocketUrl = (httpUrl: string) => {
+  const url = new URL(httpUrl);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  return url.toString();
+};
 
 export async function transcribeAudio({
   audioUri,
