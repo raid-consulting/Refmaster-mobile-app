@@ -14,7 +14,9 @@ export type TranscriptionOptions = {
   apiBaseUrl?: string;
 };
 
-const DEFAULT_API_BASE = process.env.EXPO_PUBLIC_TRANSCRIPTION_API || 'https://api.example.com';
+const DEFAULT_API_BASE = process.env.EXPO_PUBLIC_TRANSCRIPTION_API;
+
+const OPENAI_TRANSCRIPTIONS_URL = 'https://api.openai.com/v1/audio/transcriptions';
 
 const toWebSocketUrl = (httpUrl: string) => {
   const url = new URL(httpUrl);
@@ -33,6 +35,14 @@ export async function transcribeAudio({
   let socket: WebSocket | null = null;
   let closed = false;
 
+  const useDirectWhisper = !apiBaseUrl;
+
+  const audioFile: { uri: string; name: string; type: string } = {
+    uri: audioUri,
+    name: 'recording.m4a',
+    type: 'audio/m4a',
+  };
+
   const describeNetworkError = (error: unknown) => {
     if (error instanceof TypeError && error.message.includes('Network request failed')) {
       return `Network request failed. Check your connection or that the transcription API (${apiBaseUrl}) is reachable.`;
@@ -47,13 +57,72 @@ export async function transcribeAudio({
     onEvent(event);
   };
 
-  const uploadAudio = async () => {
+  const transcribeWithOpenAI = async () => {
+    const apiKey = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error('Missing EXPO_PUBLIC_OPENAI_API_KEY for direct Whisper transcription');
+    }
+
     const formData = new FormData();
-    formData.append('file', {
-      uri: audioUri,
-      name: 'recording.m4a',
-      type: 'audio/m4a',
-    } as any);
+    formData.append('file', audioFile as unknown as Blob);
+    formData.append('model', 'whisper-1');
+    formData.append('language', language);
+    if (agenda) {
+      formData.append('prompt', agenda);
+    }
+
+    emit({
+      type: 'status',
+      message:
+        language === 'da'
+          ? 'Sender lyd direkte til Whisper (ingen backend)'
+          : 'Sending audio directly to Whisper (no backend)',
+    });
+    emit({ type: 'progress', step: 'uploading', progress: 10 });
+
+    const response = await fetch(OPENAI_TRANSCRIPTIONS_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: formData,
+      signal: abortController.signal,
+    }).catch((error) => {
+      throw new Error(describeNetworkError(error));
+    });
+
+    emit({ type: 'progress', step: 'transcribing', progress: 50 });
+
+    if (!response.ok) {
+      const message = await response.text().catch(() => '');
+      const fallback = `Whisper request failed (status ${response.status})`;
+      throw new Error(message || fallback);
+    }
+
+    const payload = await response.json();
+    const text = payload?.text as string | undefined;
+    if (!text) {
+      throw new Error('Transcription response did not include text');
+    }
+
+    emit({
+      type: 'final',
+      text,
+      message:
+        language === 'da'
+          ? 'Transskription fuldført via Whisper'
+          : 'Transcription completed via Whisper',
+    });
+    emit({ type: 'progress', step: 'completed', progress: 100 });
+  };
+
+  const uploadAudio = async () => {
+    if (!apiBaseUrl) {
+      throw new Error('Transcription API base URL is missing');
+    }
+
+    const formData = new FormData();
+    formData.append('file', audioFile as unknown as Blob);
     formData.append('provider', 'whisper');
     formData.append('model', 'whisper-1');
     formData.append('language', language);
@@ -84,6 +153,10 @@ export async function transcribeAudio({
   };
 
   const connectWebSocket = (id: string) => {
+    if (!apiBaseUrl) {
+      throw new Error('Transcription API base URL is missing');
+    }
+
     const streamUrl = `${toWebSocketUrl(apiBaseUrl)}/transcriptions/${id}/stream`;
     socket = new WebSocket(streamUrl);
 
@@ -107,6 +180,20 @@ export async function transcribeAudio({
       emit({ type: 'closed' });
     };
   };
+
+  if (useDirectWhisper) {
+    transcribeWithOpenAI()
+      .then(() => emit({ type: 'closed' }))
+      .catch((error) => {
+        emit({ type: 'error', message: describeNetworkError(error) });
+        emit({ type: 'closed' });
+      });
+
+    return () => {
+      closed = true;
+      abortController.abort();
+    };
+  }
 
   const transcriptionId = await uploadAudio();
   emit({ type: 'status', message: 'Transcription upload complete' });
