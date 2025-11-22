@@ -18,5 +18,12 @@ This repository now includes an Expo/React Native skeleton focused on early cros
    ```
 3. Switch between the Home, Recorder, and Review mock screens using the tab buttons at the bottom of the app.
 
+### Transcription without a backend
+
+For quick tests, the app can call OpenAI Whisper directly without running your own API. Configure the following environment variables when starting Expo:
+
+- `EXPO_PUBLIC_OPENAI_API_KEY`: required for direct Whisper calls. The key will be used client-side, so prefer a restricted token when testing.
+- `EXPO_PUBLIC_TRANSCRIPTION_API` (optional): set this to point to your backend when you want to switch back to server-hosted transcriptions.
+
 ## Implementation Plan
 See [docs/implementation-plan.md](docs/implementation-plan.md) for the step-by-step delivery roadmap covering audio capture, transcription, and agenda alignment.
