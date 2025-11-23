@@ -74,6 +74,25 @@ export const HomeScreen: React.FC = () => {
     transcriptionSubscription.current = null;
   };
 
+  const updateTranscribeProgress = (
+    step?: 'uploading' | 'transcribing' | 'completed',
+    progress?: number,
+  ) => {
+    const stepMinimums: Record<'uploading' | 'transcribing' | 'completed', number> = {
+      uploading: 10,
+      transcribing: 50,
+      completed: 100,
+    };
+
+    setTranscribeProgress((current) => {
+      if (typeof progress === 'number') return progress;
+      if (step && typeof stepMinimums[step] === 'number') {
+        return Math.max(current, stepMinimums[step]);
+      }
+      return current;
+    });
+  };
+
   const handleTranscriptionEvent = (language: 'da' | 'en', event: TranscriptionEvent) => {
     switch (event.type) {
       case 'status':
@@ -86,16 +105,12 @@ export const HomeScreen: React.FC = () => {
         if (event.step) {
           setProgressStep(event.step);
         }
-        if (typeof event.progress === 'number') {
-          setTranscribeProgress(event.progress);
-        }
+        updateTranscribeProgress(event.step, event.progress);
         break;
       case 'partial':
         setProgressStep('transcribing');
         setIsTranscribing(true);
-        if (typeof event.progress === 'number') {
-          setTranscribeProgress(event.progress);
-        }
+        updateTranscribeProgress('transcribing', event.progress);
         if (event.text) {
           setTranscript(event.text);
         }
