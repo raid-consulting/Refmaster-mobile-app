@@ -184,6 +184,15 @@ export async function transcribeAudio({
       throw new Error('Transcription API base URL is missing');
     }
 
+    emit({
+      type: 'status',
+      message:
+        language === 'da'
+          ? 'Uploader lyd til transskriptions-API'et'
+          : 'Uploading audio to transcription API',
+    });
+    updateProgress('uploading');
+
     const formData = new FormData();
     formData.append('file', audioFile as unknown as Blob);
     formData.append('provider', 'whisper');
@@ -211,6 +220,15 @@ export async function transcribeAudio({
     if (!payload?.id) {
       throw new Error('Transcription request did not return an id');
     }
+
+    emit({
+      type: 'status',
+      message:
+        language === 'da'
+          ? 'Upload fuldført. Forbinder til transskriptionsstream...'
+          : 'Upload finished. Connecting to transcription stream...',
+    });
+    updateProgress('transcribing');
 
     return payload.id as string;
   };
