@@ -244,7 +244,7 @@ export const HomeScreen: React.FC = () => {
 
     const hasResultPromise = (
       value: unknown,
-    ): value is { resultPromise: Promise<TranscriptionResult> } => {
+    ): value is { resultPromise: Promise<TranscriptionResult>; unsubscribe?: () => void } => {
       if (!value || typeof value !== 'object' || !('resultPromise' in value)) return false;
       return (value as { resultPromise?: unknown }).resultPromise instanceof Promise;
     };
@@ -318,6 +318,10 @@ export const HomeScreen: React.FC = () => {
 
       if (typeof response === 'function') {
         transcriptionSubscription.current = response;
+      }
+
+      if (hasResultPromise(response) && typeof response.unsubscribe === 'function') {
+        transcriptionSubscription.current = response.unsubscribe;
       }
 
       const resultPromise = extractResultPromise(response, resultPromiseFromEvents);

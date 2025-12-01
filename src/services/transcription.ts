@@ -81,6 +81,13 @@ export const createWhisperAbortManager = (
   };
 };
 
+export type TranscriptionHandle =
+  | (() => void)
+  | {
+      resultPromise: Promise<TranscriptionResult>;
+      unsubscribe?: () => void;
+    };
+
 export async function transcribeAudio({
   audioUri,
   language,
@@ -89,7 +96,7 @@ export async function transcribeAudio({
   apiBaseUrl = DEFAULT_API_BASE,
   onDevice = USE_ON_DEVICE,
   cancelSignal,
-}: TranscriptionOptions): Promise<() => void> {
+}: TranscriptionOptions): Promise<TranscriptionHandle> {
   console.log('[Transcription] Starting transcription helper', {
     audioUri,
     language,
@@ -526,25 +533,33 @@ export async function transcribeAudio({
         return;
       }
       requestAbort('cancelled', 'cleanup');
-    };
+    }; 
   }
 
   if (useDirectWhisper) {
     console.log('[Transcription] Using direct Whisper API flow');
-    transcribeWithOpenAI()
+    const resultPromise = transcribeWithOpenAI()
       .then((result) => {
         if (!result.ok) {
           emit({ type: 'error', message: result.message });
         }
-        emit({ type: 'closed' });
+        return result;
       })
       .catch((error) => {
         console.error('[Transcription] Direct Whisper API failed', error);
         emit({ type: 'error', message: describeNetworkError(error) });
+        return {
+          ok: false,
+          code: 'network_error',
+          message: describeNetworkError(error),
+          rawBodySnippet: undefined,
+        } satisfies TranscriptionResult;
+      })
+      .finally(() => {
         emit({ type: 'closed' });
       });
 
-    return () => {
+    const unsubscribe = () => {
       closed = true;
       if (!requestAbort || !whisperRequestActive) {
         abortController.abort();
@@ -552,6 +567,8 @@ export async function transcribeAudio({
       }
       requestAbort('cancelled', 'cleanup');
     };
+
+    return { resultPromise, unsubscribe };
   }
 
   const transcriptionId = await uploadAudio();
