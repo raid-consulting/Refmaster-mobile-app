@@ -34,6 +34,13 @@ export async function transcribeAudio({
   apiBaseUrl = DEFAULT_API_BASE,
   onDevice = USE_ON_DEVICE,
 }: TranscriptionOptions): Promise<() => void> {
+  console.log('[Transcription] Starting transcription helper', {
+    audioUri,
+    language,
+    hasAgenda: !!agenda,
+    apiBaseUrl,
+    onDevice,
+  });
   const abortController = new AbortController();
   let socket: WebSocket | null = null;
   let closed = false;
@@ -282,9 +289,11 @@ export async function transcribeAudio({
   };
 
   if (useOnDeviceWhisper) {
+    console.log('[Transcription] Using on-device Whisper flow');
     transcribeOnDevice()
       .then(() => emit({ type: 'closed' }))
       .catch((error) => {
+        console.error('[Transcription] On-device whisper failed', error);
         emit({ type: 'error', message: describeNetworkError(error) });
         emit({ type: 'closed' });
       });
@@ -296,9 +305,11 @@ export async function transcribeAudio({
   }
 
   if (useDirectWhisper) {
+    console.log('[Transcription] Using direct Whisper API flow');
     transcribeWithOpenAI()
       .then(() => emit({ type: 'closed' }))
       .catch((error) => {
+        console.error('[Transcription] Direct Whisper API failed', error);
         emit({ type: 'error', message: describeNetworkError(error) });
         emit({ type: 'closed' });
       });
@@ -310,6 +321,7 @@ export async function transcribeAudio({
   }
 
   const transcriptionId = await uploadAudio();
+  console.log('[Transcription] Upload completed, connecting to websocket', { transcriptionId });
   emit({ type: 'status', message: 'Transcription upload complete' });
   connectWebSocket(transcriptionId);
 

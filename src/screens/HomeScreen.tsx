@@ -48,6 +48,10 @@ export const HomeScreen: React.FC = () => {
   const [activityLog, setActivityLog] = useState<string[]>([]);
   const transcriptionSubscription = useRef<(() => void) | null>(null);
   const playbackSound = useRef<Audio.Sound | null>(null);
+  const [transcriptionPhase, setTranscriptionPhase] = useState<
+    'idle' | 'recording' | 'stopping' | 'uploading' | 'transcribing' | 'done' | 'error'
+  >('idle');
+  const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
 
   const addLogEntry = (entry: string) => {
     setActivityLog((current) => [...current, entry]);
@@ -109,11 +113,18 @@ export const HomeScreen: React.FC = () => {
       case 'progress':
         if (event.step) {
           setProgressStep(event.step);
+          if (event.step === 'uploading') {
+            setTranscriptionPhase('uploading');
+          }
+          if (event.step === 'transcribing') {
+            setTranscriptionPhase('transcribing');
+          }
         }
         updateTranscribeProgress(event.step, event.progress);
         break;
       case 'partial':
         setProgressStep('transcribing');
+        setTranscriptionPhase('transcribing');
         setIsTranscribing(true);
         updateTranscribeProgress('transcribing', event.progress);
         if (event.text) {
@@ -129,6 +140,8 @@ export const HomeScreen: React.FC = () => {
         setTranscribeProgress(100);
         setProgressStep('completed');
         setIsTranscribing(false);
+        setTranscriptionPhase('done');
+        setTranscriptionError(null);
         setStatusMessage(
           event.message ?? (language === 'da' ? 'Transskription klar' : 'Transcription ready')
         );
@@ -141,12 +154,14 @@ export const HomeScreen: React.FC = () => {
       case 'error':
         setIsTranscribing(false);
         setProgressStep('error');
+        setTranscriptionPhase('error');
         setStatusMessage(
           event.message ??
             (language === 'da'
               ? 'Kunne ikke gennemføre transskription'
               : 'Unable to transcribe audio')
         );
+        setTranscriptionError(event.message ?? null);
         if (event.message) {
           addLogEntry(event.message);
         }
@@ -167,6 +182,9 @@ export const HomeScreen: React.FC = () => {
     setProgressStep('uploading');
     setTranscribeProgress(5);
     setActivityLog([]);
+    setTranscriptionPhase('uploading');
+    setTranscriptionError(null);
+    console.log('[RecorderScreen] Preparing transcription', { audioUri, language });
 
     const uploadingMessage =
       language === 'da'
@@ -176,6 +194,7 @@ export const HomeScreen: React.FC = () => {
     addLogEntry(uploadingMessage);
 
     try {
+      console.log('[RecorderScreen] Calling transcribeAudio', { audioUri, agendaLength: agenda.length });
       const unsubscribe = await transcribeAudio({
         audioUri,
         language,
@@ -184,10 +203,14 @@ export const HomeScreen: React.FC = () => {
       });
 
       transcriptionSubscription.current = unsubscribe;
+      setTranscriptionPhase('transcribing');
+      console.log('[RecorderScreen] transcribeAudio invoked');
     } catch (error) {
       console.error('Failed to transcribe audio', error);
       setIsTranscribing(false);
       setProgressStep('error');
+      setTranscriptionPhase('error');
+      setTranscriptionError(describeError(error));
       const baseMessage =
         language === 'da'
           ? 'Kunne ikke starte transskription'
@@ -200,6 +223,7 @@ export const HomeScreen: React.FC = () => {
   };
 
   const startQuickRecording = async () => {
+    console.log('[RecorderScreen] Start recording requested');
     try {
       const permission = await Audio.requestPermissionsAsync();
       if (!permission.granted) {
@@ -208,6 +232,8 @@ export const HomeScreen: React.FC = () => {
             ? 'Tillad mikrofonadgang for at optage'
             : 'Please allow microphone access to record',
         );
+        setTranscriptionPhase('error');
+        setTranscriptionError('Microphone permission not granted');
         return;
       }
 
@@ -250,6 +276,12 @@ export const HomeScreen: React.FC = () => {
       setRecordingDuration(0);
       setTranscript('');
       setIsTranscribing(false);
+      setTranscriptionPhase('recording');
+      setTranscriptionError(null);
+      console.log('[RecorderScreen] Recording started', {
+        language: transcriptionLanguage,
+        agendaLength: quickAgenda.length,
+      });
     } catch (error) {
       console.error('Failed to start quick recording', error);
       const detail = describeError(error);
@@ -259,6 +291,8 @@ export const HomeScreen: React.FC = () => {
           : `Unable to start recording: ${detail}`,
       );
       setProgressStep('error');
+      setTranscriptionPhase('error');
+      setTranscriptionError(detail);
       addLogEntry(
         transcriptionLanguage === 'da'
           ? `Fejl: Optagelsen kunne ikke startes. ${detail}`
@@ -268,11 +302,30 @@ export const HomeScreen: React.FC = () => {
   };
 
   const stopQuickRecording = async () => {
-    if (!quickRecording) return;
+    console.log('[RecorderScreen] Stop & Transcribe pressed', {
+      hasRecording: !!quickRecording,
+      uri: quickRecording?.getURI?.(),
+    });
+    if (!quickRecording) {
+      const message =
+        transcriptionLanguage === 'da'
+          ? 'Ingen aktiv optagelse at stoppe'
+          : 'No active recording to stop';
+      setStatusMessage(message);
+      setTranscriptionPhase('error');
+      setTranscriptionError(message);
+      addLogEntry(message);
+      return;
+    }
+
+    setTranscriptionPhase('stopping');
 
     try {
       const recordingUri = quickRecording.getURI();
+      console.log('[RecorderScreen] Stopping recording...', { recordingUri });
       await quickRecording.stopAndUnloadAsync();
+      const resolvedUri = quickRecording.getURI();
+      console.log('[RecorderScreen] Recording stopped', { recordingUri, resolvedUri });
       setStatusMessage(
         transcriptionLanguage === 'da'
           ? 'Optagelse stoppet — transskriberer'
@@ -285,11 +338,15 @@ export const HomeScreen: React.FC = () => {
           ? 'Optagelse stoppet. Starter upload...'
           : 'Recording stopped. Starting upload...'
       );
+      setTranscriptionPhase('uploading');
+      setTranscriptionError(null);
       setIsRecording(false);
       setQuickRecording(null);
-      setLastRecordingUri(recordingUri ?? null);
-      if (recordingUri) {
-        await startTranscription(transcriptionLanguage, quickAgenda, recordingUri);
+      setLastRecordingUri(resolvedUri ?? recordingUri ?? null);
+      const finalUri = resolvedUri ?? recordingUri;
+      if (finalUri) {
+        console.log('[RecorderScreen] Invoking transcription', { uri: finalUri });
+        await startTranscription(transcriptionLanguage, quickAgenda, finalUri);
       } else {
         setProgressStep('error');
         const message =
@@ -298,6 +355,8 @@ export const HomeScreen: React.FC = () => {
             : 'Could not access the recording file';
         setStatusMessage(message);
         addLogEntry(message);
+        setTranscriptionPhase('error');
+        setTranscriptionError(message);
       }
     } catch (error) {
       console.error('Failed to stop quick recording', error);
@@ -308,11 +367,19 @@ export const HomeScreen: React.FC = () => {
           : `Unable to stop recording: ${detail}`,
       );
       setProgressStep('error');
+      setTranscriptionPhase('error');
+      setTranscriptionError(detail);
       addLogEntry(
         transcriptionLanguage === 'da'
           ? `Fejl: Optagelsen kunne ikke stoppes. ${detail}`
           : `Error: Unable to stop recording. ${detail}`
       );
+    } finally {
+      setIsRecording(false);
+      setQuickRecording(null);
+      console.log('[RecorderScreen] Stop & Transcribe handler finished', {
+        transcriptionPhase,
+      });
     }
   };
 
@@ -534,6 +601,10 @@ export const HomeScreen: React.FC = () => {
                 ))}
               </View>
             )}
+            <Text style={styles.debugLabel}>
+              {`[debug] Transcription phase: ${transcriptionPhase}`}
+              {transcriptionError ? ` — ${transcriptionError}` : ''}
+            </Text>
           </View>
         </SectionCard>
 
@@ -731,6 +802,12 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 12,
     lineHeight: 18,
+  },
+  debugLabel: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    marginTop: 8,
+    fontStyle: 'italic',
   },
   transcriptContent: {
     gap: 6,
