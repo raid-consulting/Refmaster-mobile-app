@@ -199,6 +199,10 @@ export const HomeScreen: React.FC = () => {
         return language === 'da'
           ? 'Transskriptionsanmodningen blev afbrudt. Prøv igen.'
           : 'The transcription request was aborted. Please try again.';
+      case 'network_error':
+        return language === 'da'
+          ? 'Netværksfejl under transskription. Tjek forbindelsen og prøv igen.'
+          : 'Network problem during transcription. Please try again.';
       case 'timeout':
         return language === 'da'
           ? 'Transskriptionen tog for lang tid. Tjek forbindelsen og prøv igen.'
@@ -217,7 +221,7 @@ export const HomeScreen: React.FC = () => {
     setIsTranscribing(true);
     setTranscript('');
     setProgressStep('uploading');
-    setTranscribeProgress(5);
+    setTranscribeProgress(12);
     setActivityLog([]);
     setTranscriptionPhase('uploading');
     setTranscriptionError(null);
@@ -343,6 +347,9 @@ export const HomeScreen: React.FC = () => {
         setProgressStep('completed');
         setTranscriptionPhase('done');
         setTranscriptionError(null);
+        console.log('[RecorderScreen] Transcription succeeded', {
+          snippet: transcriptionResult.text.slice(0, 80),
+        });
         const successMessage =
           language === 'da' ? 'Transskription fuldført.' : 'Transcription completed.';
         setStatusMessage(successMessage);
@@ -355,6 +362,7 @@ export const HomeScreen: React.FC = () => {
         setStatusMessage(friendly);
         addLogEntry(friendly);
         setTranscribeProgress(0);
+        console.error('[RecorderScreen] Transcription failed', { code: transcriptionResult.code });
       }
     } catch (error) {
       console.error('[RecorderScreen] Transcription threw unexpectedly', error);
@@ -373,6 +381,20 @@ export const HomeScreen: React.FC = () => {
       setIsTranscribing(false);
       console.log('[RecorderScreen] Transcription flow cleanup', { phase: transcriptionPhaseRef.current });
     }
+  };
+
+  const resetTranscriptionUi = () => {
+    setProgressStep('idle');
+    setTranscriptionPhase('idle');
+    setTranscriptionError(null);
+    setStatusMessage('');
+    setTranscribeProgress(0);
+    setActivityLog([]);
+    setIsTranscribing(false);
+    console.log('[RecorderScreen] Transcription UI reset', {
+      transcriptionPhase: 'idle',
+      progress: 0,
+    });
   };
 
   const startQuickRecording = async () => {
@@ -743,7 +765,12 @@ export const HomeScreen: React.FC = () => {
             )}
             {statusMessage ? <Text style={styles.statusMessage}>{statusMessage}</Text> : null}
             {transcriptionPhase === 'error' && transcriptionError ? (
-              <Text style={styles.errorMessage}>{transcriptionError}</Text>
+              <View style={styles.errorRow}>
+                <Text style={styles.errorMessage}>{transcriptionError}</Text>
+                <Text style={styles.retryLink} onPress={resetTranscriptionUi}>
+                  {transcriptionLanguage === 'da' ? 'Prøv igen' : 'Try again'}
+                </Text>
+              </View>
             ) : null}
             {activityLog.length > 0 && (
               <View style={styles.logBox}>
@@ -814,8 +841,10 @@ export const HomeScreen: React.FC = () => {
             <Text style={styles.transcriptLabel}>
               {transcriptionLanguage === 'da' ? 'Seneste transskription' : 'Latest transcript'}
             </Text>
-            {transcript ? (
+            {transcriptionPhase === 'done' && transcript ? (
               <Text style={styles.transcriptText}>{transcript}</Text>
+            ) : transcriptionPhase === 'error' && transcriptionError ? (
+              <Text style={styles.transcriptError}>{transcriptionError}</Text>
             ) : (
               <Text style={styles.transcriptPlaceholder}>
                 {transcriptionLanguage === 'da'
@@ -931,6 +960,11 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontWeight: '700',
   },
+  errorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
   progressBar: {
     height: 8,
     backgroundColor: '#0f2c44',
@@ -948,6 +982,11 @@ const styles = StyleSheet.create({
   errorMessage: {
     color: colors.accent,
     fontWeight: '600',
+  },
+  retryLink: {
+    color: colors.textSecondary,
+    fontWeight: '700',
+    textDecorationLine: 'underline',
   },
   logBox: {
     gap: 4,
@@ -995,6 +1034,12 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 13,
     lineHeight: 18,
+  },
+  transcriptError: {
+    color: colors.accent,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
   },
   transcriptPlaceholder: {
     color: colors.textSecondary,
