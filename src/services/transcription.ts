@@ -6,6 +6,10 @@ export type TranscriptionEvent =
   | { type: 'error'; message?: string }
   | { type: 'closed' };
 
+export type TranscriptionResult =
+  | { ok: true; text: string }
+  | { ok: false; code: string; message: string; status?: number; rawBodySnippet?: string };
+
 export type TranscriptionOptions = {
   audioUri: string;
   language: 'da' | 'en';
@@ -42,6 +46,7 @@ export async function transcribeAudio({
     onDevice,
   });
   const abortController = new AbortController();
+  console.log('[Transcription] AbortController created for transcription helper');
   let socket: WebSocket | null = null;
   let closed = false;
 
@@ -61,6 +66,12 @@ export async function transcribeAudio({
 
     if (error instanceof Error) return error.message;
     return String(error);
+  };
+
+  const toSnippet = (value: unknown, length = 200) => {
+    if (!value) return undefined;
+    const text = typeof value === 'string' ? value : JSON.stringify(value);
+    return text.slice(0, length);
   };
 
   const emit = (event: TranscriptionEvent) => {
@@ -146,10 +157,16 @@ export async function transcribeAudio({
     emit({ type: 'progress', step, progress: stepProgress[step] });
   };
 
-  const transcribeWithOpenAI = async () => {
+  const transcribeWithOpenAI = async (): Promise<TranscriptionResult> => {
     const apiKey = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
     if (!apiKey) {
-      throw new Error('Missing EXPO_PUBLIC_OPENAI_API_KEY for direct Whisper transcription');
+      const result: TranscriptionResult = {
+        ok: false,
+        code: 'missing_api_key',
+        message: 'Missing EXPO_PUBLIC_OPENAI_API_KEY for direct Whisper transcription',
+      };
+      console.error('[Transcription] Direct Whisper configuration error', result);
+      return result;
     }
 
     const formData = new FormData();
@@ -168,41 +185,132 @@ export async function transcribeAudio({
           : 'Sending audio directly to Whisper (no backend)',
     });
     emit({ type: 'progress', step: 'uploading', progress: 10 });
-
-    const response = await fetch(OPENAI_TRANSCRIPTIONS_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: formData,
-      signal: abortController.signal,
-    }).catch((error) => {
-      throw new Error(describeNetworkError(error));
+    console.log('[Transcription] Sending direct Whisper request', {
+      uri: audioUri,
+      language,
+      hasAgenda: !!agenda,
+      endpoint: OPENAI_TRANSCRIPTIONS_URL,
     });
 
-    emit({ type: 'progress', step: 'transcribing', progress: 50 });
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutMs = 60_000;
 
-    if (!response.ok) {
-      const message = await response.text().catch(() => '');
-      const fallback = `Whisper request failed (status ${response.status})`;
-      throw new Error(message || fallback);
-    }
-
-    const payload = await response.json();
-    const text = payload?.text as string | undefined;
-    if (!text) {
-      throw new Error('Transcription response did not include text');
-    }
-
-    emit({
-      type: 'final',
-      text,
-      message:
-        language === 'da'
-          ? 'Transskription fuldført via Whisper'
-          : 'Transcription completed via Whisper',
+    const timeoutPromise = new Promise<TranscriptionResult>((resolve) => {
+      timeoutId = setTimeout(() => {
+        console.warn('[Transcription] Whisper request timed out', { timeoutMs });
+        abortController.abort();
+        resolve({
+          ok: false,
+          code: 'timeout',
+          message: 'Transcription request timed out',
+        });
+      }, timeoutMs);
     });
-    emit({ type: 'progress', step: 'completed', progress: 100 });
+
+    const fetchPromise = (async (): Promise<TranscriptionResult> => {
+      try {
+        const response = await fetch(OPENAI_TRANSCRIPTIONS_URL, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: formData,
+          signal: abortController.signal,
+        }).catch((error) => {
+          throw new Error(describeNetworkError(error));
+        });
+
+        emit({ type: 'progress', step: 'transcribing', progress: 50 });
+
+        if (!response.ok) {
+          const body = await response.text().catch(() => '');
+          const snippet = toSnippet(body);
+          console.error('[Transcription] Whisper HTTP error', {
+            status: response.status,
+            bodySnippet: snippet,
+          });
+          const result: TranscriptionResult = {
+            ok: false,
+            code: 'http_error',
+            message: `Whisper responded with status ${response.status}`,
+            status: response.status,
+            rawBodySnippet: snippet,
+          };
+          emit({ type: 'error', message: result.message });
+          return result;
+        }
+
+        const payloadText = await response.text();
+        const snippet = toSnippet(payloadText);
+        let payload: unknown;
+        try {
+          payload = JSON.parse(payloadText);
+        } catch (parseError) {
+          console.error('[Transcription] Unable to parse Whisper response JSON', parseError);
+        }
+
+        const text = (payload as { text?: string } | undefined)?.text;
+        if (!text) {
+          const result: TranscriptionResult = {
+            ok: false,
+            code: 'invalid_response',
+            message: 'Transcription response did not include text',
+            rawBodySnippet: snippet,
+          };
+          console.error('[Transcription] Whisper response missing text', result);
+          emit({ type: 'error', message: result.message });
+          return result;
+        }
+
+        const result: TranscriptionResult = { ok: true, text };
+        emit({
+          type: 'final',
+          text,
+          message:
+            language === 'da'
+              ? 'Transskription fuldført via Whisper'
+              : 'Transcription completed via Whisper',
+        });
+        emit({ type: 'progress', step: 'completed', progress: 100 });
+        console.log('[Transcription] Whisper HTTP success', {
+          status: response.status,
+          bodySnippet: snippet,
+        });
+        return result;
+      } catch (error) {
+        const asError = error as Error;
+        const isAborted =
+          asError?.name?.toLowerCase().includes('abort') || asError?.message?.toLowerCase().includes('abort');
+        const result: TranscriptionResult = isAborted
+          ? {
+              ok: false,
+              code: 'aborted',
+              message: 'Transcription request was aborted',
+              rawBodySnippet: toSnippet(error),
+            }
+          : {
+              ok: false,
+              code: 'unknown_error',
+              message: 'Transcription failed unexpectedly',
+              rawBodySnippet: toSnippet(error),
+            };
+        if (isAborted) {
+          console.warn('[Transcription] Whisper request aborted', error);
+        } else {
+          console.error('[Transcription] Whisper request failed', error);
+        }
+        emit({ type: 'error', message: result.message });
+        return result;
+      } finally {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+      }
+    })();
+
+    const result = await Promise.race([fetchPromise, timeoutPromise]);
+    console.log('[Transcription] Helper finished', result);
+    return result;
   };
 
   const uploadAudio = async () => {
@@ -307,7 +415,12 @@ export async function transcribeAudio({
   if (useDirectWhisper) {
     console.log('[Transcription] Using direct Whisper API flow');
     transcribeWithOpenAI()
-      .then(() => emit({ type: 'closed' }))
+      .then((result) => {
+        if (!result.ok) {
+          emit({ type: 'error', message: result.message });
+        }
+        emit({ type: 'closed' });
+      })
       .catch((error) => {
         console.error('[Transcription] Direct Whisper API failed', error);
         emit({ type: 'error', message: describeNetworkError(error) });
