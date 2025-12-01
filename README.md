@@ -26,5 +26,10 @@ For quick tests, the app can call OpenAI Whisper directly without running your o
 - `EXPO_PUBLIC_TRANSCRIPTION_API` (optional): set this to point to your backend when you want to switch back to server-hosted transcriptions.
 - `EXPO_PUBLIC_WHISPER_ON_DEVICE` (optional): set to `true` to run Whisper on-device via a lightweight model for offline-friendly experiments.
 
+### Troubleshooting transcription progress
+
+- If the progress bar stays around 10%, double-check that either `EXPO_PUBLIC_TRANSCRIPTION_API` is reachable or that you have configured direct Whisper usage with `EXPO_PUBLIC_OPENAI_API_KEY` (or enabled on-device transcription with `EXPO_PUBLIC_WHISPER_ON_DEVICE=true`).
+- When using your own backend, ensure it supports WebSocket streaming on the same base URL supplied in `EXPO_PUBLIC_TRANSCRIPTION_API`.
+
 ## Implementation Plan
 See [docs/implementation-plan.md](docs/implementation-plan.md) for the step-by-step delivery roadmap covering audio capture, transcription, and agenda alignment.
