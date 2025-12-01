@@ -20,3 +20,14 @@ dc79ecf - Investigation 1
 *Hypothesis and fix attempted.* The direct Whisper flow was likely hitting the timeout path, but because the abort reason was not preserved, the helper returned `{ ok: false, code: 'aborted' }`, leaving the UI stuck. By tracking the abort reason and returning `code: 'timeout'` when appropriate, we can avoid silent aborts and get clearer diagnostics. Longer-term this logging will confirm whether the timeout is too aggressive on device.
 
 *Result (fixed, partially fixed, still failing).* Partially fixed: aborts now report their reason and elapsed time, and timeout-triggered aborts return `code: 'timeout'` instead of the generic `aborted`. Manual cancellation is also logged distinctly. A new regression test validates the abort manager behaviour. Manual simulator/device verification is still pending.
+
+580fe6e - Investigation 2
+-------------------------
+
+*Current behaviour and logs.* Device logs from the current container could not be captured, but the in-app reports still show `[Transcription] Whisper request aborted [Error: Aborted]` and the UI stuck at 10%. This investigation focused on instrumenting the timeout/abort flow to reveal why the request stops and to relax the timeout that might be firing too early.
+
+*Hypotheses about the abort cause.* The 60s helper timeout is likely firing before Whisper responds (or being triggered by an external abort signal), leading to the generic aborted result. Lack of logging around timeout scheduling and external aborts makes it hard to confirm whether the helper or React Native is triggering the abort.
+
+*Code changes in this commit.* Added explicit logging when the Whisper timeout is scheduled and when an external abort signal is observed, and log the prepared form-data keys for the direct Whisper request. Extended the direct Whisper timeout to 90s and map abort-derived errors to a clearer "cancelled" message. Added a regression test to ensure external aborts mark the abort reason.
+
+*Result (fixed / improved / still failing).* Improved visibility and resilience: the helper now reports when and why timeouts or external aborts happen, uses a longer timeout for the direct call, and captures the form payload keys for debugging. On-device verification is still needed to confirm Whisper completes successfully with the relaxed timeout.
