@@ -188,7 +188,7 @@ export async function transcribeAudio({
       type: 'status',
       message:
         language === 'da'
-          ? 'Uploader lyd til transskriptions-API'et'
+          ? "Uploader lyd til transskriptions-API'et"
           : 'Uploading audio to transcription API',
     });
     updateProgress('uploading');
