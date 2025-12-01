@@ -17,6 +17,7 @@ export type TranscriptionOptions = {
   onEvent: (event: TranscriptionEvent) => void;
   apiBaseUrl?: string;
   onDevice?: boolean;
+  cancelSignal?: AbortSignal;
 };
 
 const DEFAULT_API_BASE = process.env.EXPO_PUBLIC_TRANSCRIPTION_API;
@@ -81,6 +82,7 @@ export async function transcribeAudio({
   onEvent,
   apiBaseUrl = DEFAULT_API_BASE,
   onDevice = USE_ON_DEVICE,
+  cancelSignal,
 }: TranscriptionOptions): Promise<() => void> {
   console.log('[Transcription] Starting transcription helper', {
     audioUri,
@@ -251,6 +253,13 @@ export async function transcribeAudio({
       } satisfies TranscriptionResult;
     });
     requestAbort = abortManager.requestAbort;
+    const cancelListener = () => abortManager.requestAbort('cancelled');
+
+    if (cancelSignal?.aborted) {
+      cancelListener();
+    } else if (cancelSignal) {
+      cancelSignal.addEventListener('abort', cancelListener);
+    }
 
     const fetchPromise = (async (): Promise<TranscriptionResult> => {
       try {
@@ -329,9 +338,12 @@ export async function transcribeAudio({
         return result;
       } catch (error) {
         const asError = error as Error;
-        const abortReason = abortManager.getAbortReason();
-        const isAborted =
-          abortReason !== null || abortController.signal.aborted || asError?.name?.toLowerCase().includes('abort');
+        const abortReason =
+          abortManager.getAbortReason() ??
+          (abortController.signal.aborted || asError?.name?.toLowerCase().includes('abort')
+            ? 'cancelled'
+            : null);
+        const isAborted = abortReason !== null;
         const result: TranscriptionResult = isAborted
           ? {
               ok: false,
@@ -339,7 +351,7 @@ export async function transcribeAudio({
               message:
                 abortReason === 'timeout'
                   ? 'Transcription request timed out'
-                  : 'Transcription request was aborted',
+                  : 'Transcription request was cancelled',
               rawBodySnippet: toSnippet(error),
             }
           : {
@@ -356,6 +368,9 @@ export async function transcribeAudio({
         emit({ type: 'error', message: result.message });
         return result;
       } finally {
+        if (cancelSignal && cancelListener) {
+          cancelSignal.removeEventListener('abort', cancelListener);
+        }
         abortManager.clearTimeoutIfNeeded();
       }
     })();
