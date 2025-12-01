@@ -52,7 +52,6 @@ export const createWhisperAbortManager = (
     return reason;
   };
 
-  console.log('[Transcription] Whisper request timeout scheduled', { timeoutMs });
   const timeoutPromise = new Promise<TranscriptionResult>((resolve) => {
     timeoutId = setTimeout(() => {
       requestAbort('timeout');
@@ -66,17 +65,6 @@ export const createWhisperAbortManager = (
       timeoutId = null;
     }
   };
-
-  const handleExternalAbort = () => {
-    if (reason) return;
-
-    reason = 'cancelled';
-    const elapsedMs = Date.now() - startedAt;
-    clearTimeoutIfNeeded();
-    console.warn('[Transcription] Whisper abort detected from external signal', { elapsedMs });
-  };
-
-  abortController.signal.addEventListener('abort', handleExternalAbort);
 
   return {
     timeoutPromise,
@@ -233,8 +221,6 @@ export async function transcribeAudio({
     if (agenda) {
       formData.append('prompt', agenda);
     }
-    const formKeys = ['file', 'model', 'language', ...(agenda ? ['prompt'] : [])];
-    console.log('[Transcription] Request form data prepared for Whisper', { keys: formKeys, language });
 
     emit({
       type: 'status',
@@ -251,7 +237,7 @@ export async function transcribeAudio({
       endpoint: OPENAI_TRANSCRIPTIONS_URL,
     });
 
-    const timeoutMs = 90_000;
+    const timeoutMs = 60_000;
     const abortManager = createWhisperAbortManager(abortController, timeoutMs, (elapsedMs) => {
       console.warn('[Transcription] Whisper request timed out', { timeoutMs, elapsedMs });
       return {
@@ -344,7 +330,7 @@ export async function transcribeAudio({
               message:
                 abortReason === 'timeout'
                   ? 'Transcription request timed out'
-                  : 'Transcription request was cancelled',
+                  : 'Transcription request was aborted',
               rawBodySnippet: toSnippet(error),
             }
           : {
