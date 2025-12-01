@@ -338,6 +338,14 @@ export const HomeScreen: React.FC = () => {
         return;
       }
 
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+        playThroughEarpieceAndroid: false,
+        shouldDuckAndroid: false,
+      });
+
       if (playbackSound.current) {
         const status = await playbackSound.current.getStatusAsync();
         if (status.isLoaded) {
