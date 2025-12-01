@@ -6,25 +6,39 @@ type ActionButtonProps = {
   label: string;
   onPress?: (event: GestureResponderEvent) => void;
   tone?: 'primary' | 'secondary' | 'ghost';
+  disabled?: boolean;
 };
 
-export const ActionButton: React.FC<ActionButtonProps> = ({ label, onPress, tone = 'primary' }) => (
-  <Pressable style={[styles.base, toneStyles[tone]]} onPress={onPress}>
+export const ActionButton: React.FC<ActionButtonProps> = ({
+  label,
+  onPress,
+  tone = 'primary',
+  disabled = false,
+}) => (
+  <Pressable
+    style={[styles.base, toneStyles[tone], disabled && styles.disabled]}
+    onPress={onPress}
+    disabled={disabled}
+  >
     <Text style={[styles.label, toneText[tone]]}>{label}</Text>
   </Pressable>
 );
 
 const styles = StyleSheet.create({
   base: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderRadius: 14,
     alignItems: 'center',
     borderWidth: 1,
   },
   label: {
     fontWeight: '700',
-    fontSize: 14,
+    fontSize: 16,
+    letterSpacing: 0.2,
+  },
+  disabled: {
+    opacity: 0.6,
   },
 });
 

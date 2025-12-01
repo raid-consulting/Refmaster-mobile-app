@@ -8,7 +8,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Audio } from 'expo-av';
+import { Audio, AVPlaybackStatus } from 'expo-av';
 import { colors } from '../theme/colors';
 import { Header } from '../components/Header';
 import { SectionCard } from '../components/SectionCard';
@@ -35,6 +35,8 @@ export const HomeScreen: React.FC = () => {
   const [transcriptionLanguage, setTranscriptionLanguage] = useState<'da' | 'en'>('da');
   const [quickRecording, setQuickRecording] = useState<Audio.Recording | null>(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [lastRecordingUri, setLastRecordingUri] = useState<string | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [transcript, setTranscript] = useState('');
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -45,6 +47,7 @@ export const HomeScreen: React.FC = () => {
   const [transcribeProgress, setTranscribeProgress] = useState(0);
   const [activityLog, setActivityLog] = useState<string[]>([]);
   const transcriptionSubscription = useRef<(() => void) | null>(null);
+  const playbackSound = useRef<Audio.Sound | null>(null);
 
   const addLogEntry = (entry: string) => {
     setActivityLog((current) => [...current, entry]);
@@ -57,6 +60,8 @@ export const HomeScreen: React.FC = () => {
       if (quickRecording) {
         quickRecording.stopAndUnloadAsync().catch(() => {});
       }
+      playbackSound.current?.unloadAsync().catch(() => {});
+      playbackSound.current = null;
     };
   }, [quickRecording]);
 
@@ -206,6 +211,15 @@ export const HomeScreen: React.FC = () => {
         return;
       }
 
+      if (playbackSound.current) {
+        const status = await playbackSound.current.getStatusAsync();
+        if (status.isLoaded && status.isPlaying) {
+          await playbackSound.current.pauseAsync();
+          await playbackSound.current.setPositionAsync(0);
+        }
+        setIsPlaying(false);
+      }
+
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
@@ -273,6 +287,7 @@ export const HomeScreen: React.FC = () => {
       );
       setIsRecording(false);
       setQuickRecording(null);
+      setLastRecordingUri(recordingUri ?? null);
       if (recordingUri) {
         await startTranscription(transcriptionLanguage, quickAgenda, recordingUri);
       } else {
@@ -301,6 +316,70 @@ export const HomeScreen: React.FC = () => {
     }
   };
 
+  const handlePlaybackStatus = (status: AVPlaybackStatus) => {
+    if (!status.isLoaded) {
+      setIsPlaying(false);
+      return;
+    }
+    setIsPlaying(status.isPlaying);
+    if (status.didJustFinish) {
+      setIsPlaying(false);
+    }
+  };
+
+  const playLatestRecording = async () => {
+    try {
+      if (!lastRecordingUri) {
+        setStatusMessage(
+          transcriptionLanguage === 'da'
+            ? 'Ingen optagelse klar til afspilning'
+            : 'No recording ready to play',
+        );
+        return;
+      }
+
+      if (playbackSound.current) {
+        const status = await playbackSound.current.getStatusAsync();
+        if (status.isLoaded) {
+          if (status.isPlaying) {
+            await playbackSound.current.pauseAsync();
+            setIsPlaying(false);
+            return;
+          }
+          await playbackSound.current.setPositionAsync(0);
+          await playbackSound.current.playAsync();
+          setIsPlaying(true);
+          return;
+        }
+
+        await playbackSound.current.unloadAsync();
+        playbackSound.current = null;
+      }
+
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: lastRecordingUri },
+        { shouldPlay: true },
+        handlePlaybackStatus,
+      );
+
+      playbackSound.current = sound;
+      setIsPlaying(true);
+      setStatusMessage(
+        transcriptionLanguage === 'da' ? 'Afspiller seneste optagelse' : 'Playing latest recording',
+      );
+    } catch (error) {
+      console.error('Failed to play recording', error);
+      const detail = describeError(error);
+      setStatusMessage(
+        transcriptionLanguage === 'da'
+          ? `Kunne ikke afspille optagelsen: ${detail}`
+          : `Unable to play the recording: ${detail}`,
+      );
+      addLogEntry(detail);
+      setIsPlaying(false);
+    }
+  };
+
   return (
     <KeyboardAvoidingView
       style={styles.flex}
@@ -308,15 +387,10 @@ export const HomeScreen: React.FC = () => {
       keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
     >
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-        <Header
-          title="Optag møder enkelt"
-          subtitle="Vælg et af de to forløb og få transskription på dansk."
-        />
+        <Header title="Optag møder enkelt" subtitle="Start optagelse eller spring direkte til lyd." />
 
         <SectionCard title="1. Planlagt møde" actionLabel="Med dagsorden">
-          <Text style={styles.helper}>
-            Gem dagsorden og start optagelse, så transskriptionen følger punkterne.
-          </Text>
+          <Text style={styles.helper}>Gem dagsorden og optag – så følger teksten punkterne.</Text>
           <View style={styles.fieldGroup}>
             <Text style={styles.label}>Mødetitel</Text>
             <TextInput
@@ -344,13 +418,13 @@ export const HomeScreen: React.FC = () => {
           <View style={styles.transcriptBox}>
             <Pill label="Transskription" tone="accent" />
             <Text style={styles.meta}>
-              Lyd gemmes lokalt og bliver automatisk transskriberet til dagsordenen.
+              Lyd gemmes lokalt og transskriberes automatisk.
             </Text>
           </View>
         </SectionCard>
 
         <SectionCard title="2. Hurtig optagelse" actionLabel="Start nu">
-          <Text style={styles.helper}>Indtast en kort dagsorden og begynd optagelsen med det samme.</Text>
+          <Text style={styles.helper}>Skriv kort hvad der skal med og optag med det samme.</Text>
           <View style={styles.languageRow}>
             <Text style={styles.label}>Transskriptionssprog</Text>
             <View style={styles.languageChips}>
@@ -383,11 +457,19 @@ export const HomeScreen: React.FC = () => {
               textAlignVertical="top"
             />
           </View>
-          <ActionButton
-            label={isRecording ? 'Stop optagelse' : 'Start optagelse uden plan'}
-            tone={isRecording ? 'primary' : 'secondary'}
-            onPress={isRecording ? stopQuickRecording : startQuickRecording}
-          />
+          <View style={styles.buttonRow}>
+            <ActionButton
+              label={isRecording ? 'Stop optagelse' : 'Start optagelse'}
+              tone="primary"
+              onPress={isRecording ? stopQuickRecording : startQuickRecording}
+            />
+            <ActionButton
+              label={isPlaying ? 'Pause lyd' : 'Afspil lyd'}
+              tone="secondary"
+              onPress={playLatestRecording}
+              disabled={!lastRecordingUri || isRecording}
+            />
+          </View>
           <View style={styles.transcriptBox}>
             <View style={styles.statusRow}>
               <Pill label={isRecording ? 'Live' : 'Klar'} tone={isRecording ? 'accent' : 'default'} />
@@ -395,14 +477,14 @@ export const HomeScreen: React.FC = () => {
             </View>
             <Text style={styles.meta}>
               {isRecording
-                ? 'Optager og transskriberer i baggrunden. Tilføj noter mens du optager.'
+                ? 'Optager nu. Tilføj noter undervejs.'
                 : isTranscribing
-                  ? 'Transskriberer optagelsen...'
+                  ? 'Transskriberer lyd...'
                   : transcript
                     ? transcriptionLanguage === 'da'
-                      ? 'Transskription gemt fra seneste optagelse.'
-                      : 'Transcript saved from latest recording.'
-                    : 'Klar til næste hurtige optagelse.'}
+                      ? 'Seneste optagelse er klar til afspilning.'
+                      : 'Latest recording ready to play.'
+                    : 'Klar til næste optagelse.'}
             </Text>
             {progressStep !== 'idle' && (
               <View style={styles.progressSection}>
@@ -526,6 +608,10 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 14,
     lineHeight: 20,
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: 10,
   },
   fieldGroup: {
     gap: 6,
