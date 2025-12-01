@@ -32,6 +32,12 @@ const toWebSocketUrl = (httpUrl: string) => {
 };
 
 type WhisperAbortReason = 'timeout' | 'cancelled';
+type WhisperAbortSource =
+  | 'timeout'
+  | 'caller-signal'
+  | 'cleanup'
+  | 'navigation'
+  | 'unknown';
 
 export const createWhisperAbortManager = (
   abortController: AbortController,
@@ -42,12 +48,12 @@ export const createWhisperAbortManager = (
   let reason: WhisperAbortReason | null = null;
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
-  const requestAbort = (nextReason: WhisperAbortReason) => {
+  const requestAbort = (nextReason: WhisperAbortReason, source: WhisperAbortSource = 'unknown') => {
     if (reason) return reason;
 
     reason = nextReason;
     const elapsedMs = Date.now() - startedAt;
-    console.warn('[Transcription] Whisper abort requested', { reason, elapsedMs });
+    console.warn('[Transcription] Whisper abort requested', { reason, elapsedMs, source });
     abortController.abort();
 
     return reason;
@@ -55,7 +61,7 @@ export const createWhisperAbortManager = (
 
   const timeoutPromise = new Promise<TranscriptionResult>((resolve) => {
     timeoutId = setTimeout(() => {
-      requestAbort('timeout');
+      requestAbort('timeout', 'timeout');
       resolve(onTimeoutResult(Date.now() - startedAt));
     }, timeoutMs);
   });
@@ -95,7 +101,10 @@ export async function transcribeAudio({
   console.log('[Transcription] AbortController created for transcription helper');
   let socket: WebSocket | null = null;
   let closed = false;
-  let requestAbort: ((reason: WhisperAbortReason) => WhisperAbortReason | null) | null = null;
+  let requestAbort:
+    | ((reason: WhisperAbortReason, source?: WhisperAbortSource) => WhisperAbortReason | null)
+    | null = null;
+  let whisperRequestActive = false;
 
   const useOnDeviceWhisper = onDevice;
   const useDirectWhisper = !apiBaseUrl && !useOnDeviceWhisper;
@@ -205,6 +214,7 @@ export async function transcribeAudio({
   };
 
   const transcribeWithOpenAI = async (): Promise<TranscriptionResult> => {
+    whisperRequestActive = true;
     const apiKey = process.env.EXPO_PUBLIC_OPENAI_API_KEY;
     if (!apiKey) {
       const result: TranscriptionResult = {
@@ -213,6 +223,7 @@ export async function transcribeAudio({
         message: 'Missing EXPO_PUBLIC_OPENAI_API_KEY for direct Whisper transcription',
       };
       console.error('[Transcription] Direct Whisper configuration error', result);
+      whisperRequestActive = false;
       return result;
     }
 
@@ -252,8 +263,22 @@ export async function transcribeAudio({
         message: 'Transcription request timed out',
       } satisfies TranscriptionResult;
     });
-    requestAbort = abortManager.requestAbort;
-    const cancelListener = () => abortManager.requestAbort('cancelled');
+    let whisperRequestActive = true;
+    const markWhisperFinished = () => {
+      if (!whisperRequestActive) return;
+      whisperRequestActive = false;
+      abortManager.clearTimeoutIfNeeded();
+    };
+
+    requestAbort = (reason, source = 'navigation') => {
+      if (!whisperRequestActive) return abortManager.getAbortReason();
+      return abortManager.requestAbort(reason, source);
+    };
+
+    const cancelListener = () => {
+      if (!whisperRequestActive) return;
+      abortManager.requestAbort('cancelled', 'caller-signal');
+    };
 
     if (cancelSignal?.aborted) {
       cancelListener();
@@ -371,11 +396,17 @@ export async function transcribeAudio({
         if (cancelSignal && cancelListener) {
           cancelSignal.removeEventListener('abort', cancelListener);
         }
-        abortManager.clearTimeoutIfNeeded();
+        markWhisperFinished();
       }
     })();
 
-    const result = await Promise.race([fetchPromise, abortManager.timeoutPromise]);
+    const result = await Promise.race([
+      fetchPromise,
+      abortManager.timeoutPromise.then((timeoutResult) => {
+        markWhisperFinished();
+        return timeoutResult;
+      }),
+    ]);
     console.log('[Transcription] Helper finished', {
       ok: result.ok,
       code: result.ok ? 'success' : result.code,
@@ -479,11 +510,11 @@ export async function transcribeAudio({
 
     return () => {
       closed = true;
-      if (!requestAbort) {
+      if (!requestAbort || !whisperRequestActive) {
         abortController.abort();
         return;
       }
-      requestAbort('cancelled');
+      requestAbort('cancelled', 'cleanup');
     };
   }
 
@@ -504,11 +535,11 @@ export async function transcribeAudio({
 
     return () => {
       closed = true;
-      if (!requestAbort) {
+      if (!requestAbort || !whisperRequestActive) {
         abortController.abort();
         return;
       }
-      requestAbort('cancelled');
+      requestAbort('cancelled', 'cleanup');
     };
   }
 
@@ -519,12 +550,12 @@ export async function transcribeAudio({
 
   return () => {
     closed = true;
-    if (!requestAbort) {
+    if (!requestAbort || !whisperRequestActive) {
       abortController.abort();
       socket?.close();
       return;
     }
-    requestAbort('cancelled');
+    requestAbort('cancelled', 'cleanup');
     socket?.close();
   };
 }
