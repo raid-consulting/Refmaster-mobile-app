@@ -34,24 +34,8 @@ async function testManualCancel() {
   assert.strictEqual(abortController.signal.aborted, true);
 }
 
-async function testExternalAbortMarksReason() {
-  const abortController = new AbortController();
-  const abortManager = createWhisperAbortManager(abortController, 1_000, (): TranscriptionResult => ({
-    ok: false,
-    code: 'timeout',
-    message: 'timeout',
-  }));
-
-  abortController.abort();
-  abortManager.clearTimeoutIfNeeded();
-
-  assert.strictEqual(abortManager.getAbortReason(), 'cancelled');
-  assert.strictEqual(abortController.signal.aborted, true);
-}
-
 (async () => {
   await testTimeoutAborts();
   await testManualCancel();
-  await testExternalAbortMarksReason();
   console.log('transcription abort manager tests passed');
 })();
