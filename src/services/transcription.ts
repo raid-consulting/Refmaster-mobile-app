@@ -12,9 +12,11 @@ export type TranscriptionOptions = {
   agenda?: string;
   onEvent: (event: TranscriptionEvent) => void;
   apiBaseUrl?: string;
+  onDevice?: boolean;
 };
 
 const DEFAULT_API_BASE = process.env.EXPO_PUBLIC_TRANSCRIPTION_API;
+const USE_ON_DEVICE = process.env.EXPO_PUBLIC_WHISPER_ON_DEVICE === 'true';
 
 const OPENAI_TRANSCRIPTIONS_URL = 'https://api.openai.com/v1/audio/transcriptions';
 
@@ -30,12 +32,14 @@ export async function transcribeAudio({
   agenda,
   onEvent,
   apiBaseUrl = DEFAULT_API_BASE,
+  onDevice = USE_ON_DEVICE,
 }: TranscriptionOptions): Promise<() => void> {
   const abortController = new AbortController();
   let socket: WebSocket | null = null;
   let closed = false;
 
-  const useDirectWhisper = !apiBaseUrl;
+  const useOnDeviceWhisper = onDevice;
+  const useDirectWhisper = !apiBaseUrl && !useOnDeviceWhisper;
 
   const audioFile: { uri: string; name: string; type: string } = {
     uri: audioUri,
@@ -55,6 +59,65 @@ export async function transcribeAudio({
   const emit = (event: TranscriptionEvent) => {
     if (closed) return;
     onEvent(event);
+  };
+
+  const transcribeOnDevice = async () => {
+    emit({
+      type: 'status',
+      message:
+        language === 'da'
+          ? 'Indlæser Whisper-modellen på enheden'
+          : 'Loading Whisper model on device',
+    });
+    updateProgress('uploading');
+
+    const { pipeline } = await import('@xenova/transformers');
+    const transcriber = await pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny', {
+      quantized: true,
+    });
+
+    emit({
+      type: 'status',
+      message:
+        language === 'da'
+          ? 'Whisper kører på enheden. Starter transskription'
+          : 'Running Whisper on-device. Starting transcription',
+    });
+    updateProgress('transcribing');
+
+    const response = await fetch(audioUri);
+    const buffer = await response.arrayBuffer();
+    const blob = new Blob([buffer], { type: 'audio/m4a' });
+
+    const result = await transcriber(blob, {
+      language,
+      chunk_length_s: 30,
+      stride_length_s: 5,
+    });
+
+    const text = result?.text as string | undefined;
+    if (!text) {
+      throw new Error('Whisper on-device did not produce text');
+    }
+
+    emit({
+      type: 'final',
+      text,
+      message:
+        language === 'da'
+          ? 'Transskription fuldført på enheden'
+          : 'Transcription completed on-device',
+    });
+    emit({ type: 'progress', step: 'completed', progress: 100 });
+  };
+
+  const updateProgress = (step: 'uploading' | 'transcribing' | 'completed') => {
+    const stepProgress: Record<typeof step, number> = {
+      uploading: 10,
+      transcribing: 50,
+      completed: 100,
+    };
+    emit({ type: 'progress', step, progress: stepProgress[step] });
   };
 
   const transcribeWithOpenAI = async () => {
@@ -180,6 +243,20 @@ export async function transcribeAudio({
       emit({ type: 'closed' });
     };
   };
+
+  if (useOnDeviceWhisper) {
+    transcribeOnDevice()
+      .then(() => emit({ type: 'closed' }))
+      .catch((error) => {
+        emit({ type: 'error', message: describeNetworkError(error) });
+        emit({ type: 'closed' });
+      });
+
+    return () => {
+      closed = true;
+      abortController.abort();
+    };
+  }
 
   if (useDirectWhisper) {
     transcribeWithOpenAI()

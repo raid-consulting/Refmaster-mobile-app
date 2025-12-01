@@ -24,6 +24,7 @@ For quick tests, the app can call OpenAI Whisper directly without running your o
 
 - `EXPO_PUBLIC_OPENAI_API_KEY`: required for direct Whisper calls. The key will be used client-side, so prefer a restricted token when testing.
 - `EXPO_PUBLIC_TRANSCRIPTION_API` (optional): set this to point to your backend when you want to switch back to server-hosted transcriptions.
+- `EXPO_PUBLIC_WHISPER_ON_DEVICE` (optional): set to `true` to run Whisper on-device via a lightweight model for offline-friendly experiments.
 
 ## Implementation Plan
 See [docs/implementation-plan.md](docs/implementation-plan.md) for the step-by-step delivery roadmap covering audio capture, transcription, and agenda alignment.
