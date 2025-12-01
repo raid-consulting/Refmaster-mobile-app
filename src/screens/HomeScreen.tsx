@@ -14,7 +14,11 @@ import { Header } from '../components/Header';
 import { SectionCard } from '../components/SectionCard';
 import { ActionButton } from '../components/ActionButton';
 import { Pill } from '../components/Pill';
-import { TranscriptionEvent, transcribeAudio } from '../services/transcription';
+import {
+  TranscriptionEvent,
+  TranscriptionResult,
+  transcribeAudio,
+} from '../services/transcription';
 
 const describeError = (error: unknown) => {
   if (error instanceof Error) return error.message;
@@ -52,10 +56,15 @@ export const HomeScreen: React.FC = () => {
     'idle' | 'recording' | 'stopping' | 'uploading' | 'transcribing' | 'done' | 'error'
   >('idle');
   const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
+  const transcriptionPhaseRef = useRef(transcriptionPhase);
 
   const addLogEntry = (entry: string) => {
     setActivityLog((current) => [...current, entry]);
   };
+
+  useEffect(() => {
+    transcriptionPhaseRef.current = transcriptionPhase;
+  }, [transcriptionPhase]);
 
   useEffect(() => {
     return () => {
@@ -155,6 +164,7 @@ export const HomeScreen: React.FC = () => {
         setIsTranscribing(false);
         setProgressStep('error');
         setTranscriptionPhase('error');
+        setTranscribeProgress(0);
         setStatusMessage(
           event.message ??
             (language === 'da'
@@ -172,6 +182,33 @@ export const HomeScreen: React.FC = () => {
         break;
       default:
         break;
+    }
+  };
+
+  const describeFriendlyTranscriptionError = (
+    language: 'da' | 'en',
+    result: { code?: string; message: string },
+  ) => {
+    const fallbackMessage =
+      language === 'da'
+        ? 'Noget gik galt under transskriptionen. Prøv igen.'
+        : 'Something went wrong during transcription. Please try again.';
+
+    switch (result.code) {
+      case 'aborted':
+        return language === 'da'
+          ? 'Transskriptionsanmodningen blev afbrudt. Prøv igen.'
+          : 'The transcription request was aborted. Please try again.';
+      case 'timeout':
+        return language === 'da'
+          ? 'Transskriptionen tog for lang tid. Tjek forbindelsen og prøv igen.'
+          : 'The transcription timed out. Check your connection and try again.';
+      case 'http_error':
+        return language === 'da'
+          ? 'Serveren kunne ikke transskribere lyden. Prøv igen senere.'
+          : 'The server could not transcribe the audio. Please try again shortly.';
+      default:
+        return result.message || fallbackMessage;
     }
   };
 
@@ -193,32 +230,77 @@ export const HomeScreen: React.FC = () => {
     setStatusMessage(uploadingMessage);
     addLogEntry(uploadingMessage);
 
+    let subscribedToStream = false;
+
     try {
+      setTranscriptionPhase('transcribing');
+      setProgressStep('transcribing');
+      updateTranscribeProgress('transcribing');
       console.log('[RecorderScreen] Calling transcribeAudio', { audioUri, agendaLength: agenda.length });
-      const unsubscribe = await transcribeAudio({
+      const response = await transcribeAudio({
         audioUri,
         language,
         agenda,
         onEvent: (event) => handleTranscriptionEvent(language, event),
       });
 
-      transcriptionSubscription.current = unsubscribe;
-      setTranscriptionPhase('transcribing');
-      console.log('[RecorderScreen] transcribeAudio invoked');
+      const transcriptionResult = response as TranscriptionResult | (() => void);
+      console.log('[RecorderScreen] Transcription result', {
+        ok: typeof transcriptionResult === 'function' ? undefined : transcriptionResult.ok,
+        code:
+          typeof transcriptionResult === 'function'
+            ? 'subscription'
+            : transcriptionResult.ok
+              ? 'success'
+              : transcriptionResult.code,
+      });
+
+      if (typeof transcriptionResult === 'function') {
+        transcriptionSubscription.current = transcriptionResult;
+        subscribedToStream = true;
+        setIsTranscribing(true);
+        console.log('[RecorderScreen] transcribeAudio invoked');
+        return;
+      }
+
+      if (transcriptionResult.ok) {
+        setTranscript(transcriptionResult.text);
+        setTranscribeProgress(100);
+        setProgressStep('completed');
+        setTranscriptionPhase('done');
+        setTranscriptionError(null);
+        const successMessage =
+          language === 'da' ? 'Transskription fuldført.' : 'Transcription completed.';
+        setStatusMessage(successMessage);
+        addLogEntry(successMessage);
+      } else {
+        const friendly = describeFriendlyTranscriptionError(language, transcriptionResult);
+        setTranscriptionPhase('error');
+        setProgressStep('error');
+        setTranscriptionError(friendly);
+        setStatusMessage(friendly);
+        addLogEntry(friendly);
+        setTranscribeProgress(0);
+      }
     } catch (error) {
-      console.error('Failed to transcribe audio', error);
+      console.error('[RecorderScreen] Transcription threw unexpectedly', error);
+      const detail = describeError(error);
+      const fallbackMessage =
+        language === 'da'
+          ? 'Noget gik galt under transskriptionen. Prøv igen.'
+          : 'Something went wrong during transcription. Please try again.';
       setIsTranscribing(false);
       setProgressStep('error');
       setTranscriptionPhase('error');
-      setTranscriptionError(describeError(error));
-      const baseMessage =
-        language === 'da'
-          ? 'Kunne ikke starte transskription'
-          : 'Unable to start transcription';
-      const detail = describeError(error);
-      const fullMessage = `${baseMessage}: ${detail}`;
-      setStatusMessage(fullMessage);
-      addLogEntry(fullMessage);
+      setTranscriptionError(detail || fallbackMessage);
+      setStatusMessage(fallbackMessage);
+      addLogEntry(fallbackMessage);
+      setTranscribeProgress(0);
+    } finally {
+      if (!subscribedToStream) {
+        setIsTranscribing(false);
+      }
+      console.log('[RecorderScreen] Transcription flow cleanup', { phase: transcriptionPhaseRef.current });
     }
   };
 
@@ -378,7 +460,7 @@ export const HomeScreen: React.FC = () => {
       setIsRecording(false);
       setQuickRecording(null);
       console.log('[RecorderScreen] Stop & Transcribe handler finished', {
-        transcriptionPhase,
+        transcriptionPhase: transcriptionPhaseRef.current,
       });
     }
   };
@@ -589,6 +671,9 @@ export const HomeScreen: React.FC = () => {
               </View>
             )}
             {statusMessage ? <Text style={styles.statusMessage}>{statusMessage}</Text> : null}
+            {transcriptionPhase === 'error' && transcriptionError ? (
+              <Text style={styles.errorMessage}>{transcriptionError}</Text>
+            ) : null}
             {activityLog.length > 0 && (
               <View style={styles.logBox}>
                 <Text style={styles.logLabel}>
@@ -787,6 +872,10 @@ const styles = StyleSheet.create({
   },
   statusMessage: {
     color: colors.textPrimary,
+    fontWeight: '600',
+  },
+  errorMessage: {
+    color: colors.accent,
     fontWeight: '600',
   },
   logBox: {
