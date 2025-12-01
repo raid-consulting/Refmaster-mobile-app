@@ -252,32 +252,27 @@ export async function transcribeAudio({
           : 'Sending audio directly to Whisper (no backend)',
     });
     emit({ type: 'progress', step: 'uploading', progress: 10 });
-    const timeoutMs = 60_000;
-    console.log('[Transcription] AbortController prepared for Whisper request', { timeoutMs });
-    console.log('[Transcription] Whisper request starting', whisperRequestConfig);
-    const abortManager = createWhisperAbortManager(abortController, timeoutMs, (elapsedMs) => {
-      console.warn('[Transcription] Whisper request timed out', { timeoutMs, elapsedMs });
-      return {
-        ok: false,
-        code: 'timeout',
-        message: 'Transcription request timed out',
-      } satisfies TranscriptionResult;
-    });
+    // TODO: Reintroduce a safe timeout/cancel strategy once baseline Whisper responses are verified.
+    console.log('[Transcription] Whisper request starting (no AbortController active)', whisperRequestConfig);
     let whisperRequestActive = true;
+    let abortReason: WhisperAbortReason | null = null;
     const markWhisperFinished = () => {
       if (!whisperRequestActive) return;
       whisperRequestActive = false;
-      abortManager.clearTimeoutIfNeeded();
     };
 
     requestAbort = (reason, source = 'navigation') => {
-      if (!whisperRequestActive) return abortManager.getAbortReason();
-      return abortManager.requestAbort(reason, source);
+      if (!whisperRequestActive) return abortReason;
+
+      abortReason = reason;
+      console.warn('[Transcription] Whisper abort requested (no controller)', { reason, source });
+      return abortReason;
     };
 
     const cancelListener = () => {
       if (!whisperRequestActive) return;
-      abortManager.requestAbort('cancelled', 'caller-signal');
+      abortReason = 'cancelled';
+      console.warn('[Transcription] Whisper abort requested via cancel signal (no controller)');
     };
 
     if (cancelSignal?.aborted) {
@@ -288,16 +283,45 @@ export async function transcribeAudio({
 
     const fetchPromise = (async (): Promise<TranscriptionResult> => {
       try {
+        if (abortReason) {
+          const result: TranscriptionResult = {
+            ok: false,
+            code: abortReason === 'timeout' ? 'timeout' : 'aborted',
+            message:
+              abortReason === 'timeout'
+                ? 'Transcription request timed out'
+                : 'Transcription request was cancelled',
+          };
+          emit({ type: 'error', message: result.message });
+          return result;
+        }
+
         const response = await fetch(OPENAI_TRANSCRIPTIONS_URL, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${apiKey}`,
           },
           body: formData,
-          signal: abortController.signal,
         }).catch((error) => {
           throw new Error(describeNetworkError(error));
         });
+
+        if (abortReason) {
+          const result: TranscriptionResult = {
+            ok: false,
+            code: abortReason === 'timeout' ? 'timeout' : 'aborted',
+            message:
+              abortReason === 'timeout'
+                ? 'Transcription request timed out'
+                : 'Transcription request was cancelled',
+            rawBodySnippet: toSnippet(`aborted after response: ${abortReason}`),
+          };
+          console.warn('[Transcription] Whisper request marked aborted after response (no controller)', {
+            abortReason,
+          });
+          emit({ type: 'error', message: result.message });
+          return result;
+        }
 
         emit({ type: 'progress', step: 'transcribing', progress: 50 });
 
@@ -362,14 +386,7 @@ export async function transcribeAudio({
         });
         return result;
       } catch (error) {
-        const asError = error as Error;
-        const abortReason =
-          abortManager.getAbortReason() ??
-          (abortController.signal.aborted || asError?.name?.toLowerCase().includes('abort')
-            ? 'cancelled'
-            : null);
-        const isAborted = abortReason !== null;
-        const result: TranscriptionResult = isAborted
+        const result: TranscriptionResult = abortReason
           ? {
               ok: false,
               code: abortReason === 'timeout' ? 'timeout' : 'aborted',
@@ -381,14 +398,14 @@ export async function transcribeAudio({
             }
           : {
               ok: false,
-              code: 'unknown_error',
-              message: 'Transcription failed unexpectedly',
+              code: 'network_error',
+              message: 'Network or client error during transcription',
               rawBodySnippet: toSnippet(error),
             };
-        if (isAborted) {
-          console.warn('[Transcription] Whisper request aborted', error);
+        if (abortReason) {
+          console.warn('[Transcription] Whisper request aborted (no controller)', error);
         } else {
-          console.error('[Transcription] Whisper request failed', error);
+          console.error('[Transcription] Whisper request failed unexpectedly', error);
         }
         emit({ type: 'error', message: result.message });
         return result;
@@ -400,13 +417,7 @@ export async function transcribeAudio({
       }
     })();
 
-    const result = await Promise.race([
-      fetchPromise,
-      abortManager.timeoutPromise.then((timeoutResult) => {
-        markWhisperFinished();
-        return timeoutResult;
-      }),
-    ]);
+    const result = await fetchPromise;
     console.log('[Transcription] Helper finished', {
       ok: result.ok,
       code: result.ok ? 'success' : result.code,
