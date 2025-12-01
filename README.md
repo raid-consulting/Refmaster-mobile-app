@@ -33,3 +33,6 @@ For quick tests, the app can call OpenAI Whisper directly without running your o
 
 ## Implementation Plan
 See [docs/implementation-plan.md](docs/implementation-plan.md) for the step-by-step delivery roadmap covering audio capture, transcription, and agenda alignment.
+
+## Architecture diagram
+Refer to the [data flow diagram](docs/data-flow.md) for a Mermaid visualization of how frontend modules, databases, and external services interact.
