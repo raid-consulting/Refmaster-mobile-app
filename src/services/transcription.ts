@@ -72,9 +72,28 @@ export async function transcribeAudio({
     updateProgress('uploading');
 
     const { pipeline } = await import('@xenova/transformers');
-    const transcriber = await pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny', {
-      quantized: true,
-    });
+    const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number, message: string) => {
+      let timeoutId: ReturnType<typeof setTimeout>;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+      });
+
+      try {
+        return await Promise.race([promise, timeoutPromise]);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    };
+
+    const transcriber = await withTimeout(
+      pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny', {
+        quantized: true,
+      }),
+      45_000,
+      language === 'da'
+        ? 'Tidsudløb under indlæsning af Whisper-modellen på enheden. Deaktiver on-device mode for at bruge serveren i stedet.'
+        : 'Timed out while loading the Whisper model on-device. Disable on-device mode to fall back to the server.',
+    );
 
     emit({
       type: 'status',
