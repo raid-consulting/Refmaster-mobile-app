@@ -230,7 +230,71 @@ export const HomeScreen: React.FC = () => {
     setStatusMessage(uploadingMessage);
     addLogEntry(uploadingMessage);
 
-    let subscribedToStream = false;
+    const describeClosedWithoutResult = () =>
+      language === 'da'
+        ? 'Transskriptionen blev lukket uden resultat'
+        : 'The transcription closed without a result';
+
+    const isTranscriptionResult = (value: unknown): value is TranscriptionResult =>
+      !!value && typeof value === 'object' && typeof (value as { ok?: unknown }).ok === 'boolean';
+
+    const hasResultPromise = (
+      value: unknown,
+    ): value is { resultPromise: Promise<TranscriptionResult> } => {
+      if (!value || typeof value !== 'object' || !('resultPromise' in value)) return false;
+      return (value as { resultPromise?: unknown }).resultPromise instanceof Promise;
+    };
+
+    const extractResultPromise = (
+      response: unknown,
+      fallback: Promise<TranscriptionResult>,
+    ): Promise<TranscriptionResult> => {
+      if (isTranscriptionResult(response)) {
+        return Promise.resolve(response);
+      }
+
+      if (hasResultPromise(response)) {
+        return response.resultPromise;
+      }
+
+      return fallback;
+    };
+
+    let resolveResult: ((result: TranscriptionResult) => void) | null = null;
+    let settled = false;
+    const resultPromiseFromEvents = new Promise<TranscriptionResult>((resolve) => {
+      resolveResult = resolve;
+    });
+
+    const settleResult = (result: TranscriptionResult) => {
+      if (settled) return;
+      settled = true;
+      resolveResult?.(result);
+    };
+
+    const wrappedOnEvent = (event: TranscriptionEvent) => {
+      handleTranscriptionEvent(language, event);
+
+      if (event.type === 'final') {
+        settleResult({ ok: true, text: event.text ?? '' });
+      }
+
+      if (event.type === 'error') {
+        settleResult({
+          ok: false,
+          code: 'error',
+          message:
+            event.message ??
+            (language === 'da'
+              ? 'Transskriptionen mislykkedes'
+              : 'Transcription failed'),
+        });
+      }
+
+      if (event.type === 'closed' && !settled) {
+        settleResult({ ok: false, code: 'aborted', message: describeClosedWithoutResult() });
+      }
+    };
 
     try {
       setTranscriptionPhase('transcribing');
@@ -241,27 +305,33 @@ export const HomeScreen: React.FC = () => {
         audioUri,
         language,
         agenda,
-        onEvent: (event) => handleTranscriptionEvent(language, event),
+        onEvent: wrappedOnEvent,
       });
 
-      const transcriptionResult = response as TranscriptionResult | (() => void);
-      console.log('[RecorderScreen] Transcription result', {
-        ok: typeof transcriptionResult === 'function' ? undefined : transcriptionResult.ok,
-        code:
-          typeof transcriptionResult === 'function'
-            ? 'subscription'
-            : transcriptionResult.ok
-              ? 'success'
-              : transcriptionResult.code,
-      });
-
-      if (typeof transcriptionResult === 'function') {
-        transcriptionSubscription.current = transcriptionResult;
-        subscribedToStream = true;
-        setIsTranscribing(true);
-        console.log('[RecorderScreen] transcribeAudio invoked');
-        return;
+      if (typeof response === 'function') {
+        transcriptionSubscription.current = response;
       }
+
+      const resultPromise = extractResultPromise(response, resultPromiseFromEvents);
+      const transcriptionResult = await resultPromise.catch((error) => {
+        console.error('[RecorderScreen] Transcription promise rejected', error);
+        const fallbackMessage =
+          language === 'da'
+            ? 'Noget gik galt under transskriptionen. Prøv igen.'
+            : 'Something went wrong during transcription. Please try again.';
+        return {
+          ok: false,
+          code: 'error',
+          message: describeError(error) || fallbackMessage,
+        } satisfies TranscriptionResult;
+      });
+
+      settleResult(transcriptionResult);
+
+      console.log('[RecorderScreen] Transcription result', {
+        ok: transcriptionResult.ok,
+        code: transcriptionResult.ok ? 'success' : transcriptionResult.code,
+      });
 
       if (transcriptionResult.ok) {
         setTranscript(transcriptionResult.text);
@@ -289,7 +359,6 @@ export const HomeScreen: React.FC = () => {
         language === 'da'
           ? 'Noget gik galt under transskriptionen. Prøv igen.'
           : 'Something went wrong during transcription. Please try again.';
-      setIsTranscribing(false);
       setProgressStep('error');
       setTranscriptionPhase('error');
       setTranscriptionError(detail || fallbackMessage);
@@ -297,9 +366,7 @@ export const HomeScreen: React.FC = () => {
       addLogEntry(fallbackMessage);
       setTranscribeProgress(0);
     } finally {
-      if (!subscribedToStream) {
-        setIsTranscribing(false);
-      }
+      setIsTranscribing(false);
       console.log('[RecorderScreen] Transcription flow cleanup', { phase: transcriptionPhaseRef.current });
     }
   };
