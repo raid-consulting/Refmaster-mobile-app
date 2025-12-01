@@ -222,6 +222,15 @@ export async function transcribeAudio({
       formData.append('prompt', agenda);
     }
 
+    const whisperRequestConfig = {
+      endpoint: OPENAI_TRANSCRIPTIONS_URL,
+      method: 'POST',
+      model: 'whisper-1',
+      language,
+      hasAgenda: !!agenda,
+      uri: audioUri,
+    } as const;
+
     emit({
       type: 'status',
       message:
@@ -230,14 +239,9 @@ export async function transcribeAudio({
           : 'Sending audio directly to Whisper (no backend)',
     });
     emit({ type: 'progress', step: 'uploading', progress: 10 });
-    console.log('[Transcription] Sending direct Whisper request', {
-      uri: audioUri,
-      language,
-      hasAgenda: !!agenda,
-      endpoint: OPENAI_TRANSCRIPTIONS_URL,
-    });
-
     const timeoutMs = 60_000;
+    console.log('[Transcription] AbortController prepared for Whisper request', { timeoutMs });
+    console.log('[Transcription] Whisper request starting', whisperRequestConfig);
     const abortManager = createWhisperAbortManager(abortController, timeoutMs, (elapsedMs) => {
       console.warn('[Transcription] Whisper request timed out', { timeoutMs, elapsedMs });
       return {
@@ -262,6 +266,11 @@ export async function transcribeAudio({
         });
 
         emit({ type: 'progress', step: 'transcribing', progress: 50 });
+
+        console.log('[Transcription] Whisper HTTP completed', {
+          status: response.status,
+          ok: response.ok,
+        });
 
         if (!response.ok) {
           const body = await response.text().catch(() => '');
@@ -352,7 +361,11 @@ export async function transcribeAudio({
     })();
 
     const result = await Promise.race([fetchPromise, abortManager.timeoutPromise]);
-    console.log('[Transcription] Helper finished', result);
+    console.log('[Transcription] Helper finished', {
+      ok: result.ok,
+      code: result.ok ? 'success' : result.code,
+      hasText: !!(result as { text?: string }).text,
+    });
     return result;
   };
 

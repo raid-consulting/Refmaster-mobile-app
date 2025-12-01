@@ -300,7 +300,11 @@ export const HomeScreen: React.FC = () => {
       setTranscriptionPhase('transcribing');
       setProgressStep('transcribing');
       updateTranscribeProgress('transcribing');
-      console.log('[RecorderScreen] Calling transcribeAudio', { audioUri, agendaLength: agenda.length });
+      console.log('[RecorderScreen] Calling transcribeAudio', {
+        audioUri,
+        language,
+        agendaLength: agenda.length,
+      });
       const response = await transcribeAudio({
         audioUri,
         language,
@@ -328,7 +332,7 @@ export const HomeScreen: React.FC = () => {
 
       settleResult(transcriptionResult);
 
-      console.log('[RecorderScreen] Transcription result', {
+      console.log('[RecorderScreen] Transcription result from helper', {
         ok: transcriptionResult.ok,
         code: transcriptionResult.ok ? 'success' : transcriptionResult.code,
       });
