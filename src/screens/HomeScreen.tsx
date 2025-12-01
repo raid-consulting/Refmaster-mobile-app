@@ -321,25 +321,29 @@ export const HomeScreen: React.FC = () => {
       }
 
       const resultPromise = extractResultPromise(response, resultPromiseFromEvents);
-      const transcriptionResult = await resultPromise.catch((error) => {
+
+      let transcriptionResult: TranscriptionResult;
+      try {
+        transcriptionResult = await resultPromise;
+      } catch (error) {
         console.error('[RecorderScreen] Transcription promise rejected', error);
         const fallbackMessage =
           language === 'da'
             ? 'Noget gik galt under transskriptionen. Prøv igen.'
             : 'Something went wrong during transcription. Please try again.';
-        return {
+        transcriptionResult = {
           ok: false,
           code: 'error',
           message: describeError(error) || fallbackMessage,
         } satisfies TranscriptionResult;
-      });
+      }
 
       settleResult(transcriptionResult);
 
       console.log('[RecorderScreen] Transcription result from helper', {
         ok: transcriptionResult.ok,
         code: transcriptionResult.ok ? 'success' : transcriptionResult.code,
-        hasText: !!transcriptionResult.text,
+        hasText: !!(transcriptionResult as { text?: string }).text,
       });
 
       if (transcriptionResult.ok) {
@@ -788,6 +792,14 @@ export const HomeScreen: React.FC = () => {
                 ))}
               </View>
             )}
+            {transcriptText ? (
+              <View style={styles.inlineTranscriptContainer}>
+                <Text style={styles.inlineTranscriptLabel}>
+                  {transcriptionLanguage === 'da' ? 'Transkript' : 'Transcript'}
+                </Text>
+                <Text style={styles.inlineTranscriptText}>{transcriptText}</Text>
+              </View>
+            ) : null}
             <Text style={styles.debugLabel}>
               {`[debug] Transcription phase: ${transcriptionPhase}`}
               {transcriptionError ? ` — ${transcriptionError}` : ''}
@@ -1037,6 +1049,21 @@ const styles = StyleSheet.create({
   transcriptText: {
     color: colors.textPrimary,
     fontSize: 13,
+    lineHeight: 18,
+  },
+  inlineTranscriptContainer: {
+    marginTop: 12,
+    paddingTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+    gap: 4,
+  },
+  inlineTranscriptLabel: {
+    color: colors.textSecondary,
+    fontWeight: '700',
+  },
+  inlineTranscriptText: {
+    color: colors.textPrimary,
     lineHeight: 18,
   },
   transcriptError: {
