@@ -42,7 +42,7 @@ export const HomeScreen: React.FC = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [lastRecordingUri, setLastRecordingUri] = useState<string | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
-  const [transcript, setTranscript] = useState('');
+  const [transcriptText, setTranscriptText] = useState<string | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [progressStep, setProgressStep] = useState<'idle' | 'uploading' | 'transcribing' | 'completed' | 'error'>(
@@ -137,7 +137,7 @@ export const HomeScreen: React.FC = () => {
         setIsTranscribing(true);
         updateTranscribeProgress('transcribing', event.progress);
         if (event.text) {
-          setTranscript(event.text);
+          setTranscriptText(event.text);
         }
         if (event.message) {
           setStatusMessage(event.message);
@@ -145,7 +145,7 @@ export const HomeScreen: React.FC = () => {
         }
         break;
       case 'final':
-        setTranscript(event.text ?? '');
+        setTranscriptText(event.text ?? null);
         setTranscribeProgress(100);
         setProgressStep('completed');
         setIsTranscribing(false);
@@ -219,7 +219,7 @@ export const HomeScreen: React.FC = () => {
   const startTranscription = async (language: 'da' | 'en', agenda: string, audioUri: string) => {
     cleanupTranscription();
     setIsTranscribing(true);
-    setTranscript('');
+    setTranscriptText(null);
     setProgressStep('uploading');
     setTranscribeProgress(12);
     setActivityLog([]);
@@ -339,16 +339,17 @@ export const HomeScreen: React.FC = () => {
       console.log('[RecorderScreen] Transcription result from helper', {
         ok: transcriptionResult.ok,
         code: transcriptionResult.ok ? 'success' : transcriptionResult.code,
+        hasText: !!transcriptionResult.text,
       });
 
       if (transcriptionResult.ok) {
-        setTranscript(transcriptionResult.text);
+        setTranscriptText(transcriptionResult.text ?? null);
         setTranscribeProgress(100);
         setProgressStep('completed');
         setTranscriptionPhase('done');
         setTranscriptionError(null);
         console.log('[RecorderScreen] Transcription succeeded', {
-          snippet: transcriptionResult.text.slice(0, 80),
+          snippet: transcriptionResult.text ? transcriptionResult.text.slice(0, 80) : '',
         });
         const successMessage =
           language === 'da' ? 'Transskription fuldført.' : 'Transcription completed.';
@@ -358,6 +359,7 @@ export const HomeScreen: React.FC = () => {
         const friendly = describeFriendlyTranscriptionError(language, transcriptionResult);
         setTranscriptionPhase('error');
         setProgressStep('error');
+        setTranscriptText(null);
         setTranscriptionError(friendly);
         setStatusMessage(friendly);
         addLogEntry(friendly);
@@ -373,6 +375,7 @@ export const HomeScreen: React.FC = () => {
           : 'Something went wrong during transcription. Please try again.';
       setProgressStep('error');
       setTranscriptionPhase('error');
+      setTranscriptText(null);
       setTranscriptionError(detail || fallbackMessage);
       setStatusMessage(fallbackMessage);
       addLogEntry(fallbackMessage);
@@ -389,6 +392,7 @@ export const HomeScreen: React.FC = () => {
     setTranscriptionError(null);
     setStatusMessage('');
     setTranscribeProgress(0);
+    setTranscriptText(null);
     setActivityLog([]);
     setIsTranscribing(false);
     console.log('[RecorderScreen] Transcription UI reset', {
@@ -449,7 +453,7 @@ export const HomeScreen: React.FC = () => {
       setQuickRecording(recording);
       setIsRecording(true);
       setRecordingDuration(0);
-      setTranscript('');
+      setTranscriptText(null);
       setIsTranscribing(false);
       setTranscriptionPhase('recording');
       setTranscriptionError(null);
@@ -730,7 +734,7 @@ export const HomeScreen: React.FC = () => {
                 ? 'Optager nu. Tilføj noter undervejs.'
                 : isTranscribing
                   ? 'Transskriberer lyd...'
-                  : transcript
+                  : transcriptText
                     ? transcriptionLanguage === 'da'
                       ? 'Seneste optagelse er klar til afspilning.'
                       : 'Latest recording ready to play.'
@@ -794,7 +798,7 @@ export const HomeScreen: React.FC = () => {
         <SectionCard
           title={transcriptionLanguage === 'da' ? 'Transskription' : 'Transcription'}
           actionLabel={
-            transcript
+            transcriptText
               ? transcriptionLanguage === 'da'
                 ? 'Del med mødedeltagere'
                 : 'Share with attendees'
@@ -812,22 +816,22 @@ export const HomeScreen: React.FC = () => {
                     ? transcriptionLanguage === 'da'
                       ? 'Behandler lyd'
                       : 'Processing audio'
-                    : transcript
-                      ? transcriptionLanguage === 'da'
-                        ? 'Klar til deling'
-                        : 'Ready to share'
-                      : transcriptionLanguage === 'da'
-                        ? 'Ingen transskription endnu'
+                  : transcriptText
+                    ? transcriptionLanguage === 'da'
+                      ? 'Klar til deling'
+                      : 'Ready to share'
+                    : transcriptionLanguage === 'da'
+                      ? 'Ingen transskription endnu'
                         : 'No transcript yet'
               }
-              tone={isRecording || isTranscribing || transcript ? 'accent' : 'default'}
+              tone={isRecording || isTranscribing || transcriptText ? 'accent' : 'default'}
             />
             <Text style={styles.transcriptStatus}>
               {progressStep === 'transcribing'
                 ? transcriptionLanguage === 'da'
                   ? 'Transskriberer den seneste optagelse'
                   : 'Transcribing your latest recording'
-                : transcript
+                : transcriptText
                   ? transcriptionLanguage === 'da'
                     ? 'Seneste transskription klar nedenfor'
                     : 'Latest transcript available below'
@@ -841,10 +845,10 @@ export const HomeScreen: React.FC = () => {
             <Text style={styles.transcriptLabel}>
               {transcriptionLanguage === 'da' ? 'Seneste transskription' : 'Latest transcript'}
             </Text>
-            {transcriptionPhase === 'done' && transcript ? (
-              <Text style={styles.transcriptText}>{transcript}</Text>
-            ) : transcriptionPhase === 'error' && transcriptionError ? (
+            {transcriptionPhase === 'error' && transcriptionError ? (
               <Text style={styles.transcriptError}>{transcriptionError}</Text>
+            ) : transcriptText ? (
+              <Text style={styles.transcriptText}>{transcriptText}</Text>
             ) : (
               <Text style={styles.transcriptPlaceholder}>
                 {transcriptionLanguage === 'da'
