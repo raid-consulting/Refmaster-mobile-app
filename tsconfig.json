@@ -10,7 +10,7 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "noEmit": true,
-    "types": ["react", "react-native"]
+    "types": ["react", "react-native", "node"]
   },
   "include": ["**/*.ts", "**/*.tsx"],
   "exclude": ["node_modules", "babel.config.js"]
